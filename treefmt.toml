@@ -70,9 +70,9 @@ priority = 0
 # Command to execute
 command = "rebar3"
 # Command-line arguments for the command
-options = [ "fmt" ]
+options = [ "fmt", "-w", "--" ]
 # Glob pattern of files to include
-includes = [ "**.erl" ]
+includes = [ "**.erl", "rebar.config" ]
 # Glob patterns of files to exclude
 excludes = []
 # Controls the order of application when multiple formatters match the same file
