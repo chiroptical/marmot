@@ -1,10 +1,36 @@
 -module(marmot).
 
+%% TODO: This needs to end up in a wrapping module
+-include_lib("pgo/src/pgo_internal.hrl").
+
 -export([
+    connect/0,
     from_file/1,
     infer_types/1,
     parameters_and_returns/1
 ]).
+
+%% TODO: These need to be configurable in rebar.config
+connect() ->
+    maybe
+        {ok, _Started} ?= application:ensure_all_started(pgo),
+        {ok, _Pid} ?=
+            pgo:start_pool(default, #{
+                pool_size => 1, host => "127.0.0.1", database => "postgres", user => "chiroptical"
+            }),
+        {ok, PoolRef, Conn} ?= pgo:checkout(default),
+        Result = parse(Conn, "select 1"),
+        ok ?= pgo:checkin(PoolRef, Conn),
+        {ok, Result}
+    else
+        {error, Reason} ->
+            logger:notice(Reason),
+            {error, "Something unexpected happened"}
+    end.
+
+%% TODO: Need to send the proper series of messages and receive the response
+parse(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
+    SocketModule:send(Socket, pgo_protocol:encode_parse_message("", Query, [])).
 
 -record(untyped_query, {
     input_file_name :: string(),
