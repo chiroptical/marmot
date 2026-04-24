@@ -1,36 +1,13 @@
 -module(marmot).
-
-%% TODO: This needs to end up in a wrapping module
--include_lib("pgo/src/pgo_internal.hrl").
+-moduledoc """
+TODO
+""".
 
 -export([
-    connect/0,
     from_file/1,
     infer_types/1,
     parameters_and_returns/1
 ]).
-
-%% TODO: These need to be configurable in rebar.config
-connect() ->
-    maybe
-        {ok, _Started} ?= application:ensure_all_started(pgo),
-        {ok, _Pid} ?=
-            pgo:start_pool(default, #{
-                pool_size => 1, host => "127.0.0.1", database => "postgres", user => "chiroptical"
-            }),
-        {ok, PoolRef, Conn} ?= pgo:checkout(default),
-        Result = parse(Conn, "select 1"),
-        ok ?= pgo:checkin(PoolRef, Conn),
-        {ok, Result}
-    else
-        {error, Reason} ->
-            logger:notice(Reason),
-            {error, "Something unexpected happened"}
-    end.
-
-%% TODO: Need to send the proper series of messages and receive the response
-parse(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
-    SocketModule:send(Socket, pgo_protocol:encode_parse_message("", Query, [])).
 
 -record(untyped_query, {
     input_file_name :: string(),
@@ -94,16 +71,18 @@ from_file(FileName) ->
     returns :: list(#field{})
 }).
 
+-doc """
+1. Ask postgres for information about query parameters and returned rows
+2. The parameters will allows us to turn OIDs into Erlang `type()`
+3. Return types will give us OIDs too, but we can't know nullability
+   without reading the query plan
+Q: If we are unable to form a query plan, e.g. with a `do`, just assume
+   the returns are nullable?
+""".
 -spec infer_types(#untyped_query{}) ->
     {ok, #typed_query{}}
     | {error, Reason :: string()}.
 infer_types(UntypedQuery = #untyped_query{}) ->
-    % 1. Ask postgres for information about query parameters and returned rows
-    % 2. The parameters will allows us to turn OIDs into Erlang `type()`
-    % 3. Return types will give us OIDs too, but we can't know nullability
-    %    without reading the query plan
-    % Q: If we are unable to form a query plan, e.g. with a `do`, just assume
-    %    the returns are nullable?
     {ok, #typed_query{
         input_file_name = UntypedQuery#untyped_query.input_file_name,
         starting_line = UntypedQuery#untyped_query.starting_line,
@@ -113,20 +92,22 @@ infer_types(UntypedQuery = #untyped_query{}) ->
         returns = []
     }}.
 
+-doc """
+1. Need a connection to make queries
+2. pgo_protocol:encode_parse_message/3
+3. pgo_protocol:encode_describe_message/2
+4. pgo_protocol:encode_sync_message/0
+5.
+SocketModule can be ssl or gen_tcp, ideally we just have a pgo connection
+case SocketModule:send(Socket, pgo_protocol:encode...(...)) of
+    ok ->
+        receive_message(SocketModule, Socket, Pool, []);
+    {error, _} = SendError ->
+        SendError
+end.
+""".
 -spec parameters_and_returns(#untyped_query{}) ->
     {ok, nil}
     | {error, Reason :: string()}.
 parameters_and_returns(_UntypedQuery = #untyped_query{}) ->
-    %% 1. Need a connection to make queries
-    %% 2. pgo_protocol:encode_parse_message/3
-    %% 3. pgo_protocol:encode_describe_message/2
-    %% 4. pgo_protocol:encode_sync_message/0
-    %% 5.
-    %% SocketModule can be ssl or gen_tcp, ideally we just have a pgo connection
-    %% case SocketModule:send(Socket, pgo_protocol:encode...(...)) of
-    %%     ok ->
-    %%         receive_message(SocketModule, Socket, Pool, []);
-    %%     {error, _} = SendError ->
-    %%         SendError
-    %% end.
     {ok, nil}.
