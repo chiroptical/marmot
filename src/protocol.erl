@@ -19,9 +19,10 @@ prepare_statement("select brand, model from cars where year = $1").
 ## TODO
 
 - Pool preperation should happen in an exported function called by our plugin
-- Types for this function
 - Handle errors from `receive_message/4`
 """.
+-spec prepare_statement(binary()) ->
+    {ok, [oid()], [#row_description_field{}]} | {error, binary()}.
 prepare_statement(Statement) ->
     maybe
         {ok, _Started} ?= application:ensure_all_started(pgo),
@@ -33,19 +34,18 @@ prepare_statement(Statement) ->
         ok ?= parse(Conn, Statement),
         ok ?= describe(Conn),
         ok ?= sync(Conn),
-        #conn{socket_module = SocketModule, socket = Socket} = Conn,
-        {ok, #parse_complete{}} ?= receive_message(SocketModule, Socket, Conn, []),
+        {ok, #parse_complete{}} ?= receive_message(Conn, []),
         {ok, #parameter_description{count = _ParamCount, data_types = Params}} ?=
-            receive_message(SocketModule, Socket, Conn, []),
+            receive_message(Conn, []),
         {ok, #row_description{count = _RowCount, fields = Fields}} ?=
-            receive_message(SocketModule, Socket, Conn, []),
-        {ok, _} ?= receive_message(SocketModule, Socket, Conn, []),
+            receive_message(Conn, []),
+        {ok, _} ?= receive_message(Conn, []),
         ok ?= pgo:checkin(PoolRef, Conn),
         {ok, Params, Fields}
     else
         {error, Reason} ->
             logger:notice(Reason),
-            {error, "Something unexpected happened"}
+            {error, ~"Something unexpected happened"}
     end.
 
 -define(MESSAGE_HEADER_SIZE, 5).
@@ -53,12 +53,9 @@ prepare_statement(Statement) ->
 -doc """
 Copied directly from https://github.com/erleans/pgo/blob/36efee8288bebbcfd2bfd9b2c157789a77537c3a/src/pgo_handler.erl#L602-L627
 The function isn't exported, but I need to decode in a loop
-
-## TODO
-
-- Add types signature
 """.
-receive_message(SocketModule, Socket, Conn, DecodeOpts) ->
+-spec receive_message(#conn{}, list()) -> {ok, _} | {error, any()}.
+receive_message(#conn{socket_module = SocketModule, socket = Socket} = Conn, DecodeOpts) ->
     Result0 =
         case SocketModule:recv(Socket, ?MESSAGE_HEADER_SIZE) of
             {ok, <<Code:8/integer, Size:32/integer>>} ->
@@ -79,37 +76,30 @@ receive_message(SocketModule, Socket, Conn, DecodeOpts) ->
         end,
     case Result0 of
         {ok, #notification_response{} = _Notification} ->
-            receive_message(SocketModule, Socket, Conn, DecodeOpts);
+            receive_message(Conn, DecodeOpts);
         _ ->
             Result0
     end.
 
+-type send() :: ok | {error, closed | {timeout, binary() | erlang:iovec()} | inet:posix()}.
+
 -doc """
 Send a parse message to postgresql    
-
-# TODO
-
-- Add a type signature
 """.
+-spec parse(#conn{}, binary()) -> send().
 parse(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
     SocketModule:send(Socket, pgo_protocol:encode_parse_message("", Query, [])).
 
 -doc """
 Send a describe message to postgresql    
-
-## TODO
-
-- Add a type signature
 """.
+-spec describe(#conn{}) -> send().
 describe(#conn{socket_module = SocketModule, socket = Socket}) ->
     SocketModule:send(Socket, pgo_protocol:encode_describe_message(statement, "")).
 
 -doc """
 Send a sync message to postgresql    
-
-## TODO
-
-- Add a type signature
 """.
+-spec sync(#conn{}) -> send().
 sync(#conn{socket_module = SocketModule, socket = Socket}) ->
     SocketModule:send(Socket, pgo_protocol:encode_sync_message()).
