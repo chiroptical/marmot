@@ -37,7 +37,11 @@ some_api() ->
 
 - [ ] Implement `infer_types`, L544 src/squirrel/internal/database/postgres.gleam
     Given `UntypedQuery`, returns `{ok, TypedQuery}` or `{error, ...}` 
-    - [ ] Set up `pgo` architecture for making client requests
-    - [ ] Write and test `parameters_and_returns`
+    - [x] Set up `pgo` architecture for making client requests
+    - [x] Write `parameters_and_returns`, see `protocol:prepare_statement/1`
+    - [ ] Test `parameters_and_returns`, see `protocol:prepare_statement/1`
+    - [ ] Write and test `resolve_parameters`, src/squirrel/internal/database/postgres.gleam L704
+    - [ ] Write and test `query_plan`, src/squirrel/internal/database/postgres.gleam L765
+    - [ ] Write and test `resolve_returns`, src/squirrel/internal/database/postgres.gleam L897
 
 [squirrel]: https://github.com/giacomocavalieri/squirrel
