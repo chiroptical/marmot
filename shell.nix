@@ -6,5 +6,6 @@ pkgs.mkShell {
     erlang-language-platform
     nixfmt
     treefmt
+    pinact
   ];
 }
