@@ -6,30 +6,59 @@
 -include_lib("pgo/src/pgo_internal.hrl").
 
 -export([
+    prepare_pool/0,
     prepare_statement/1
 ]).
 
 -doc """
+Start the default pgo connection pool. Pool is configured via the following environment variables,
+
+- PGO_HOST, default 127.0.0.1
+- PGO_DATABASE, default marmot
+- PGO_USER, default marmot
+- PGO_PASSWORD, default marmot
+
+## TODO
+
+- We probably want a version which just takes arguments for the rebar plugin
+""".
+-spec prepare_pool() -> ok | {error, term()}.
+prepare_pool() ->
+    maybe
+        {ok, _Started} ?= application:ensure_all_started(pgo),
+        {ok, _Pid} ?=
+            pgo:start_pool(default, #{
+                pool_size => 1,
+                host => os:getenv("PGO_HOST", "127.0.0.1"),
+                database => os:getenv("PGO_DATABASE", "marmot"),
+                user => os:getenv("PGO_USER", "marmot"),
+                password => os:getenv("PGO_PASSWORD", "marmot")
+            }),
+        ok
+    else
+        {error, Reason} ->
+            logger:notice(Reason),
+            {error, ~"Unable to start connection pool"}
+    end.
+
+-doc """
+Prepare and describe a SQL statement, returning the parameter OIDs and row
+description fields. Requires that `prepare_pool/0` has been called first.
+
 For example,
 
 ```erlang
-prepare_statement("select brand, model from cars where year = $1").
+{ok, [23], Fields} = protocol:prepare_statement(~"select $1::integer as num").
 ```
 
 ## TODO
 
-- Pool preperation should happen in an exported function called by our plugin
 - Handle errors from `receive_message/4`
 """.
 -spec prepare_statement(binary()) ->
     {ok, [oid()], [#row_description_field{}]} | {error, binary()}.
 prepare_statement(Statement) ->
     maybe
-        {ok, _Started} ?= application:ensure_all_started(pgo),
-        {ok, _Pid} ?=
-            pgo:start_pool(default, #{
-                pool_size => 1, host => "127.0.0.1", database => "postgres", user => "chiroptical"
-            }),
         {ok, PoolRef, Conn} ?= pgo:checkout(default),
         ok ?= parse(Conn, Statement),
         ok ?= describe(Conn),
