@@ -3,11 +3,18 @@
 TODO
 """.
 
+-include_lib("pg_types/include/pg_types.hrl").
+
 -export([
     from_file/1,
     infer_types/1,
-    parameters_and_returns/1
+    parameters_and_returns/1,
+    resolve_parameters/1,
+    name_to_type/1,
+    type_info_to_type/2
 ]).
+
+-export_type([type/0]).
 
 -record(untyped_query, {
     input_file_name :: string(),
@@ -43,7 +50,6 @@ from_file(FileName) ->
 -type type() ::
     date
     | {option, type()}
-    | date
     | time_of_day
     | timestamp
     | bit_array
@@ -51,10 +57,10 @@ from_file(FileName) ->
     | float
     | numeric
     | bool
-    | string
     | json
-    | uuid:uuid()
-    | list(type()).
+    | uuid
+    | {enum, Name :: binary(), Variants :: [binary()]}
+    | {list, type()}.
 
 -record(field, {
     identifier :: string(),
@@ -111,3 +117,93 @@ end.
     | {error, Reason :: string()}.
 parameters_and_returns(_UntypedQuery = #untyped_query{}) ->
     {ok, nil}.
+
+-doc """
+TODO
+""".
+-spec resolve_parameters([pos_integer()]) ->
+    {ok, [type()]} | {error, term()}.
+resolve_parameters(Oids) ->
+    marmot_helper:collect([resolve_oid(default, Oid) || Oid <- Oids]).
+
+-spec resolve_oid(atom(), pos_integer()) ->
+    {ok, type()} | {error, term()}.
+resolve_oid(Pool, Oid) ->
+    case pg_types:lookup_type_info(Pool, Oid) of
+        unknown_oid -> {error, {unsupported_type, Oid}};
+        #type_info{} = Info -> type_info_to_type(Pool, Info)
+    end.
+
+-doc """
+TODO
+""".
+-spec type_info_to_type(atom(), #type_info{}) ->
+    {ok, type()} | {error, term()}.
+type_info_to_type(Pool, #type_info{module = pg_array} = Info) ->
+    Elem =
+        case Info#type_info.elem_type of
+            undefined -> pg_types:lookup_type_info(Pool, Info#type_info.elem_oid);
+            Other -> Other
+        end,
+    case Elem of
+        unknown_oid ->
+            {error, {unsupported_type, Info#type_info.elem_oid}};
+        #type_info{} = E1 ->
+            case type_info_to_type(Pool, E1) of
+                {ok, T} -> {ok, {list, T}};
+                Err -> Err
+            end
+    end;
+type_info_to_type(_Pool, #type_info{module = pg_enum} = Info) ->
+    resolve_enum(Info);
+type_info_to_type(_Pool, #type_info{name = Name}) ->
+    name_to_type(Name).
+
+-doc """
+TODO
+""".
+-spec name_to_type(binary()) -> {ok, type()} | {error, term()}.
+name_to_type(~"int2") -> {ok, int};
+name_to_type(~"int4") -> {ok, int};
+name_to_type(~"int8") -> {ok, int};
+name_to_type(~"oid") -> {ok, int};
+name_to_type(~"float4") -> {ok, float};
+name_to_type(~"float8") -> {ok, float};
+name_to_type(~"numeric") -> {ok, numeric};
+name_to_type(~"bool") -> {ok, bool};
+name_to_type(~"text") -> {ok, bit_array};
+name_to_type(~"varchar") -> {ok, bit_array};
+name_to_type(~"bpchar") -> {ok, bit_array};
+name_to_type(~"char") -> {ok, bit_array};
+name_to_type(~"name") -> {ok, bit_array};
+name_to_type(~"citext") -> {ok, bit_array};
+name_to_type(~"bytea") -> {ok, bit_array};
+name_to_type(~"bit") -> {ok, bit_array};
+name_to_type(~"varbit") -> {ok, bit_array};
+name_to_type(~"uuid") -> {ok, uuid};
+name_to_type(~"json") -> {ok, json};
+name_to_type(~"jsonb") -> {ok, json};
+name_to_type(~"date") -> {ok, date};
+name_to_type(~"time") -> {ok, time_of_day};
+name_to_type(~"timestamp") -> {ok, timestamp};
+name_to_type(~"timestamptz") -> {ok, timestamp};
+name_to_type(Name) -> {error, {unsupported_type, Name}}.
+
+-doc """
+TODO
+""".
+-spec resolve_enum(#type_info{}) ->
+    {ok, type()} | {error, term()}.
+resolve_enum(#type_info{oid = Oid, name = Name}) ->
+    case
+        pgo:query(
+            "select enumlabel from pg_enum where enumtypid = $1::integer order by enumsortorder",
+            [Oid],
+            #{decode_opts => [return_rows_as_maps]}
+        )
+    of
+        #{command := select, rows := Rows} ->
+            {ok, {enum, Name, [L || #{~"enumlabel" := L} <- Rows]}};
+        _ ->
+            {error, {unsupported_type, Oid}}
+    end.
