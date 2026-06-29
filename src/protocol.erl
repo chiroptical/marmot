@@ -60,6 +60,11 @@ For example,
 prepare_statement(Statement) ->
     maybe
         {ok, PoolRef, Conn} ?= pgo:checkout(default),
+        %% pgo's `extended_query` leaves the socket in `{active, once}` for idle
+        %% notification monitoring. We use blocking `recv` below, so switch to
+        %% `{active, false}` for the duration of the exchange, then restore
+        %% `{active, once}` before checkin so pgo resumes its idle handling.
+        ok = set_active(Conn, false),
         ok ?= parse(Conn, Statement),
         ok ?= describe(Conn),
         ok ?= sync(Conn),
@@ -69,6 +74,7 @@ prepare_statement(Statement) ->
         {ok, #row_description{count = _RowCount, fields = Fields}} ?=
             receive_message(Conn, []),
         {ok, _} ?= receive_message(Conn, []),
+        ok = set_active(Conn, once),
         ok ?= pgo:checkin(PoolRef, Conn),
         {ok, Params, Fields}
     else
@@ -132,3 +138,9 @@ Send a sync message to postgresql
 -spec sync(#conn{}) -> send().
 sync(#conn{socket_module = SocketModule, socket = Socket}) ->
     SocketModule:send(Socket, pgo_protocol:encode_sync_message()).
+
+-spec set_active(#conn{}, false | once | true) -> ok | {error, term()}.
+set_active(#conn{socket_module = gen_tcp, socket = Socket}, Mode) when is_port(Socket) ->
+    inet:setopts(Socket, [{active, Mode}]);
+set_active(#conn{socket_module = ssl, socket = Socket}, Mode) ->
+    ssl:setopts(Socket, [{active, Mode}]).
