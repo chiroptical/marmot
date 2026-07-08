@@ -1,5 +1,5 @@
 {
-  description = "Music monday";
+  description = "marmot";
 
   inputs = {
     nixpkgs.url = "nixpkgs/nixpkgs-unstable";
