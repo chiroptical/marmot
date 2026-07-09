@@ -18,13 +18,14 @@ TODO
 
 -export_type([type/0]).
 
--record(untyped_query, {
-    input_file_name :: string(),
-    starting_line :: integer(),
+-record(#untyped_query{
+    input_file_name = "" :: string(),
+    starting_line = 0 :: integer(),
     % TODO: root_name should be binary
-    root_name :: file:filename_all(),
-    file_content :: binary()
+    root_name = "" :: file:filename_all(),
+    file_content = <<>> :: binary()
 }).
+-export_record([untyped_query]).
 
 -doc """
 Given a `string()`, attempt to read the file and generate an `#untyped_query{}`.

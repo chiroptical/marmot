@@ -7,7 +7,8 @@
 
 -export([
     prepare_pool/0,
-    prepare_statement/1
+    prepare_statement/1,
+    explain/1
 ]).
 
 -doc """
@@ -144,3 +145,73 @@ set_active(#conn{socket_module = gen_tcp, socket = Socket}, Mode) when is_port(S
     inet:setopts(Socket, [{active, Mode}]);
 set_active(#conn{socket_module = ssl, socket = Socket}, Mode) ->
     ssl:setopts(Socket, [{active, Mode}]).
+
+-doc """
+TODO
+""".
+-spec explain(binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
+explain(Query) ->
+    maybe
+        {ok, PoolRef, Conn} ?= pgo:checkout(default),
+        try
+            ok = set_active(Conn, false),
+            run_explain(Conn, Query)
+        after
+            set_active(Conn, once),
+            pgo:checkin(PoolRef, Conn)
+        end
+    else
+        {error, Reason} ->
+            logger:notice(Reason),
+            {error, ~"Unable to checkout connection"}
+    end.
+
+-spec run_explain(#conn{}, binary()) -> {ok, binary()} | {error, term()}.
+run_explain(Conn, Query) ->
+    case simple_query(Conn, Query) of
+        ok -> receive_explain_messages(Conn);
+        {error, _} = E -> E
+    end.
+
+-spec simple_query(#conn{}, binary()) -> send().
+simple_query(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
+    SocketModule:send(Socket, pgo_protocol:encode_query_message(Query)).
+
+-spec receive_explain_messages(#conn{}) -> {ok, binary()} | {error, term()}.
+receive_explain_messages(Conn) ->
+    case receive_message(Conn, []) of
+        {ok, #error_response{fields = Fields}} ->
+            drain_until_ready(Conn),
+            {error, {explain_failed, Fields}};
+        {ok, #row_description{fields = [#row_description_field{name = ~"QUERY PLAN"}]}} ->
+            receive_explain_row(Conn);
+        {ok, Other} ->
+            drain_until_ready(Conn),
+            {error, {unexpected_message, Other}};
+        {error, _} = E ->
+            E
+    end.
+
+-spec receive_explain_row(#conn{}) -> {ok, binary()} | {error, term()}.
+receive_explain_row(Conn) ->
+    case receive_message(Conn, []) of
+        {ok, #data_row{values = [Json]}} ->
+            drain_until_ready(Conn),
+            {ok, Json};
+        {ok, Other} ->
+            drain_until_ready(Conn),
+            {error, {unexpected_message, Other}};
+        {error, _} = E ->
+            E
+    end.
+
+-spec drain_until_ready(#conn{}) -> ok.
+drain_until_ready(Conn) ->
+    case receive_message(Conn, []) of
+        {ok, #ready_for_query{}} ->
+            ok;
+        {ok, _} ->
+            drain_until_ready(Conn);
+        {error, _} ->
+            ok
+    end.
