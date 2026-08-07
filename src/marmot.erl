@@ -18,13 +18,14 @@ TODO
 
 -export_type([type/0]).
 
--record(untyped_query, {
-    input_file_name :: string(),
-    starting_line :: integer(),
+-record(#untyped_query{
+    input_file_name = "" :: string(),
+    starting_line = 0 :: integer(),
     % TODO: root_name should be binary
-    root_name :: file:filename_all(),
-    file_content :: binary()
+    root_name = "" :: file:filename_all(),
+    file_content = <<>> :: binary()
 }).
+-export_record([untyped_query]).
 
 -doc """
 Given a `string()`, attempt to read the file and generate an `#untyped_query{}`.
@@ -64,12 +65,12 @@ from_file(FileName) ->
     | {enum, Name :: binary(), Variants :: [binary()]}
     | {list, type()}.
 
--record(field, {
+-record #field{
     identifier :: string(),
     type :: type()
-}).
+}.
 
--record(typed_query, {
+-record #typed_query{
     input_file_name :: string(),
     starting_line :: integer(),
     % TODO: root_name should be binary
@@ -77,7 +78,7 @@ from_file(FileName) ->
     content :: binary(),
     params :: list(type()),
     returns :: list(#field{})
-}).
+}.
 
 -doc """
 1. Ask postgres for information about query parameters and returned rows
