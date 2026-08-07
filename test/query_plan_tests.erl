@@ -132,7 +132,7 @@ no_join_test() ->
 
 full_join_nullable_test() ->
     Plan = #plan{
-        join_type = full_join,
+        join_type = {some, full_join},
         output = [~"a", ~"b"],
         plans = [
             #plan{output = [~"a"]},
@@ -143,7 +143,7 @@ full_join_nullable_test() ->
 
 left_join_nullable_test() ->
     Plan = #plan{
-        join_type = left_join,
+        join_type = {some, left_join},
         output = [~"a", ~"b"],
         plans = [
             #plan{output = [~"a"]},
@@ -154,7 +154,7 @@ left_join_nullable_test() ->
 
 right_join_nullable_test() ->
     Plan = #plan{
-        join_type = right_join,
+        join_type = {some, right_join},
         output = [~"a", ~"b"],
         plans = [
             #plan{output = [~"a"]},
@@ -165,7 +165,7 @@ right_join_nullable_test() ->
 
 semi_join_nullable_test() ->
     Plan = #plan{
-        join_type = semi_join,
+        join_type = {some, semi_join},
         output = [~"a", ~"b"],
         plans = [
             #plan{output = [~"a"]},
@@ -176,7 +176,7 @@ semi_join_nullable_test() ->
 
 inner_join_nullable_test() ->
     Plan = #plan{
-        join_type = inner_join,
+        join_type = {some, inner_join},
         output = [~"a", ~"b"],
         plans = [
             #plan{output = [~"a"]},
@@ -187,11 +187,11 @@ inner_join_nullable_test() ->
 
 nested_left_join_with_full_join_test() ->
     Plan = #plan{
-        join_type = left_join,
+        join_type = {some, left_join},
         output = [~"a", ~"b", ~"c"],
         plans = [
             #plan{
-                join_type = full_join,
+                join_type = {some, full_join},
                 output = [~"a", ~"b"],
                 plans = [
                     #plan{output = [~"a"]},
@@ -202,6 +202,16 @@ nested_left_join_with_full_join_test() ->
         ]
     },
     ?assertEqual([0, 1, 2], nullable_indices(Plan)).
+
+decoded_left_join_nullable_test() ->
+    Json =
+        ~"""
+    [{"Plan":{"Node Type":"Hash Join","Join Type":"Left","Output":["a.name","b.value"],
+    "Plans":[{"Node Type":"Seq Scan","Output":["a.name","a.id"]},
+             {"Node Type":"Seq Scan","Output":["b.value","b.id"]}]}}]
+    """,
+    {ok, Plan} = query_plan:decode_plan(Json),
+    ?assertEqual([1], nullable_indices(Plan)).
 
 nullable_indices(Plan) ->
     lists:sort(sets:to_list(query_plan:nullables_from_plan(Plan))).
