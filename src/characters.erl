@@ -97,5 +97,4 @@ any_match(Bin, [H | T]) ->
 
 -spec is_valid_beginning(binary()) -> boolean().
 is_valid_beginning(~"") -> false;
-is_valid_beginning(<<"_", _/binary>>) -> false;
-is_valid_beginning(_) -> true.
+is_valid_beginning(<<First, _/binary>>) -> is_lower_alpha(First).

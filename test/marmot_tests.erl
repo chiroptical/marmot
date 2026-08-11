@@ -110,3 +110,60 @@ base_type_info() ->
 
 empty_params_test() ->
     ?assertEqual({ok, []}, marmot:resolve_parameters([])).
+
+identifier_plain_test() ->
+    ?assertEqual({ok, name}, marmot:column_name_to_identifier(~"name")).
+
+identifier_digits_and_underscores_test() ->
+    ?assertEqual({ok, a_1_b2}, marmot:column_name_to_identifier(~"a_1_b2")).
+
+identifier_bang_suffix_test() ->
+    ?assertEqual({ok, id}, marmot:column_name_to_identifier(~"id!")).
+
+identifier_question_suffix_test() ->
+    ?assertEqual({ok, value}, marmot:column_name_to_identifier(~"value?")).
+
+identifier_leading_digit_test() ->
+    ?assertEqual({error, {invalid_column, ~"1abc"}}, marmot:column_name_to_identifier(~"1abc")).
+
+identifier_leading_underscore_test() ->
+    ?assertEqual({error, {invalid_column, ~"_abc"}}, marmot:column_name_to_identifier(~"_abc")).
+
+identifier_uppercase_test() ->
+    ?assertEqual({error, {invalid_column, ~"Name"}}, marmot:column_name_to_identifier(~"Name")).
+
+identifier_embedded_space_test() ->
+    ?assertEqual(
+        {error, {invalid_column, ~"Weird Name"}},
+        marmot:column_name_to_identifier(~"Weird Name")
+    ).
+
+identifier_empty_test() ->
+    ?assertEqual({error, {invalid_column, ~""}}, marmot:column_name_to_identifier(~"")).
+
+identifier_non_ascii_test() ->
+    ?assertEqual({error, {invalid_column, ~"oöo"}}, marmot:column_name_to_identifier(~"oöo")).
+
+identifier_reports_original_with_suffix_test() ->
+    ?assertEqual(
+        {error, {invalid_column, ~"Weird Name!"}},
+        marmot:column_name_to_identifier(~"Weird Name!")
+    ).
+
+nullability_override_none_test() ->
+    ?assertEqual(none, marmot:nullability_override(~"name")).
+
+nullability_override_not_nullable_test() ->
+    ?assertEqual(not_nullable, marmot:nullability_override(~"name!")).
+
+nullability_override_nullable_test() ->
+    ?assertEqual(nullable, marmot:nullability_override(~"name?")).
+
+nullability_override_empty_test() ->
+    ?assertEqual(none, marmot:nullability_override(~"")).
+
+empty_returns_test() ->
+    ?assertEqual({ok, []}, marmot:resolve_returns([], sets:new([{version, 2}]))).
+
+empty_nullability_map_test() ->
+    ?assertEqual({ok, #{}}, marmot:nullability_map([])).

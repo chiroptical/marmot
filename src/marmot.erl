@@ -4,6 +4,7 @@ TODO
 """.
 
 -include_lib("pg_types/include/pg_types.hrl").
+-include_lib("pgo/src/pgo_internal.hrl").
 
 -define(DEFAULT_POOL, default).
 
@@ -12,6 +13,10 @@ TODO
     infer_types/1,
     parameters_and_returns/1,
     resolve_parameters/1,
+    resolve_returns/2,
+    column_name_to_identifier/1,
+    nullability_override/1,
+    nullability_map/1,
     name_to_type/1,
     type_info_to_type/1
 ]).
@@ -26,6 +31,27 @@ TODO
     file_content = <<>> :: binary()
 }).
 -export_record([untyped_query]).
+
+-type type() ::
+    date
+    | {option, type()}
+    | time_of_day
+    | timestamp
+    | bit_array
+    | int
+    | float
+    | numeric
+    | bool
+    | json
+    | uuid
+    | {enum, Name :: binary(), Variants :: [binary()]}
+    | {list, type()}.
+
+-record #field{
+    identifier :: atom(),
+    type :: type()
+}.
+-export_record([field]).
 
 -doc """
 Given a `string()`, attempt to read the file and generate an `#untyped_query{}`.
@@ -49,26 +75,6 @@ from_file(FileName) ->
     else
         {error, Reason} -> {error, Reason}
     end.
-
--type type() ::
-    date
-    | {option, type()}
-    | time_of_day
-    | timestamp
-    | bit_array
-    | int
-    | float
-    | numeric
-    | bool
-    | json
-    | uuid
-    | {enum, Name :: binary(), Variants :: [binary()]}
-    | {list, type()}.
-
--record #field{
-    identifier :: string(),
-    type :: type()
-}.
 
 -record #typed_query{
     input_file_name :: string(),
@@ -129,6 +135,147 @@ to resolve any of the OIDs, the entire functions returns an error tuple.
     {ok, [type()]} | {error, term()}.
 resolve_parameters(Oids) ->
     collect([resolve_oid(Oid) || Oid <- Oids]).
+
+-doc """
+
+""".
+-spec resolve_returns([#row_description_field{}], sets:set(non_neg_integer())) ->
+    {ok, [#field{}]} | {error, term()}.
+resolve_returns(Fields, Nullables) ->
+    maybe
+        {ok, NotNull} ?= nullability_map(Fields),
+        collect([
+            resolve_return(Field, Index, Nullables, NotNull)
+         || {Index, Field} <- lists:enumerate(0, Fields)
+        ])
+    else
+        {error, _} = E -> E
+    end.
+
+-spec resolve_return(
+    #row_description_field{}, non_neg_integer(), sets:set(non_neg_integer()), map()
+) ->
+    {ok, #field{}} | {error, term()}.
+resolve_return(Field, Index, Nullables, NotNull) ->
+    Name = iolist_to_binary(Field#row_description_field.name),
+    maybe
+        {ok, Identifier} ?= column_name_to_identifier(Name),
+        {ok, Type} ?= resolve_oid(Field#row_description_field.data_type_oid),
+        Wrapped =
+            case is_nullable(Name, Index, Field, Nullables, NotNull) of
+                true -> {option, Type};
+                false -> Type
+            end,
+        {ok, #field{identifier = Identifier, type = Wrapped}}
+    else
+        {error, _} = E -> E
+    end.
+
+-spec is_nullable(
+    binary(), non_neg_integer(), #row_description_field{}, sets:set(non_neg_integer()), map()
+) ->
+    boolean().
+is_nullable(Name, Index, Field, Nullables, NotNull) ->
+    case nullability_override(Name) of
+        not_nullable ->
+            false;
+        nullable ->
+            true;
+        none ->
+            case sets:is_element(Index, Nullables) of
+                true ->
+                    true;
+                false ->
+                    Key = {
+                        Field#row_description_field.table_oid,
+                        Field#row_description_field.attr_number
+                    },
+                    case NotNull of
+                        #{Key := AttNotNull} ->
+                            AttNotNull =/= true;
+                        #{} ->
+                            false
+                    end
+            end
+    end.
+
+-doc """
+""".
+-spec column_name_to_identifier(iodata()) -> {ok, atom()} | {error, term()}.
+column_name_to_identifier(Name0) ->
+    Name = iolist_to_binary(Name0),
+    Stripped = strip_nullability_suffix(Name),
+    case characters:is_valid_character_set(Stripped) of
+        true -> {ok, binary_to_atom(Stripped, utf8)};
+        false -> {error, {invalid_column, Name}}
+    end.
+
+-doc """
+""".
+-spec nullability_override(iodata()) -> not_nullable | nullable | none.
+nullability_override(Name0) ->
+    case iolist_to_binary(Name0) of
+        ~"" -> none;
+        Name -> suffix_override(binary:last(Name))
+    end.
+
+-spec suffix_override(byte()) -> not_nullable | nullable | none.
+suffix_override($!) -> not_nullable;
+suffix_override($?) -> nullable;
+suffix_override(_) -> none.
+
+-spec strip_nullability_suffix(binary()) -> binary().
+strip_nullability_suffix(~"") ->
+    ~"";
+strip_nullability_suffix(Name) ->
+    Size = byte_size(Name) - 1,
+    case Name of
+        <<Rest:Size/binary, $!>> -> Rest;
+        <<Rest:Size/binary, $?>> -> Rest;
+        _ -> Name
+    end.
+
+-define(NULLABILITY_SQL,
+    ~"""
+select a.attnotnull
+from unnest($1::int4[], $2::int4[]) with ordinality as t(rel, num, ord)
+left join pg_attribute a on a.attrelid = t.rel::oid and a.attnum = t.num::int2
+order by t.ord
+"""
+).
+
+-doc """
+""".
+-spec nullability_map([#row_description_field{}]) ->
+    {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
+nullability_map(Fields) ->
+    Pairs = lists:uniq([
+        {TableOid, AttrNumber}
+     || #row_description_field{table_oid = TableOid, attr_number = AttrNumber} <- Fields,
+        TableOid =/= 0
+    ]),
+    case Pairs of
+        [] -> {ok, #{}};
+        _ -> query_nullability(Pairs)
+    end.
+
+-spec query_nullability([{integer(), integer()}]) ->
+    {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
+query_nullability(Pairs) ->
+    Relations = [Relation || {Relation, _} <- Pairs],
+    Numbers = [Number || {_, Number} <- Pairs],
+    Options = #{decode_opts => [return_rows_as_maps]},
+    case pgo:query(?NULLABILITY_SQL, [Relations, Numbers], Options) of
+        #{command := select, rows := Rows} when length(Rows) =:= length(Pairs) ->
+            NotNullByPair =
+                #{
+                    Pair => NotNull
+                 || {Pair, #{~"attnotnull" := NotNull}} <- lists:zip(Pairs, Rows)
+                },
+            {ok, NotNullByPair};
+        _ ->
+            {error, {nullability_lookup_failed, Pairs}}
+    end.
 
 -spec resolve_oid(pos_integer()) ->
     {ok, type()} | {error, term()}.

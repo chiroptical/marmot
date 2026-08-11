@@ -86,15 +86,15 @@ nullables_from_plan(#plan{} = Plan) ->
 -spec do_nullables_from_plan(#plan{}, map(), sets:set()) -> sets:set().
 do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryOutputs, Nullables) ->
     case {JoinType, Plans} of
-        {full_join, _} ->
+        {{some, full_join}, _} ->
             sets:union(plan_outputs_indices(Plan, QueryOutputs), Nullables);
-        {right_join, [Left, Right]} ->
+        {{some, right_join}, [Left, Right]} ->
             do_nullables_from_plan(
                 Right,
                 QueryOutputs,
                 sets:union(plan_outputs_indices(Left, QueryOutputs), Nullables)
             );
-        {Join, [Left, Right]} when Join =:= left_join; Join =:= semi_join ->
+        {{some, Join}, [Left, Right]} when Join =:= left_join; Join =:= semi_join ->
             do_nullables_from_plan(
                 Left,
                 QueryOutputs,
