@@ -176,3 +176,35 @@ empty_returns_test() ->
 
 empty_nullability_map_test() ->
     ?assertEqual({ok, #{}}, marmot:nullability_map(config(), [])).
+
+leading_comment_none_test() ->
+    ?assertEqual([], marmot:leading_comment(~"select 1")).
+
+leading_comment_empty_input_test() ->
+    ?assertEqual([], marmot:leading_comment(~"")).
+
+leading_comment_no_trailing_newline_test() ->
+    ?assertEqual([~"a", ~"b"], marmot:leading_comment(~"-- a\n-- b")).
+
+leading_comment_stops_at_query_test() ->
+    ?assertEqual([~"a"], marmot:leading_comment(~"-- a\nselect 1 -- b\n")).
+
+leading_comment_crlf_test() ->
+    ?assertEqual([~"a"], marmot:leading_comment(~"-- a\r\nselect 1")).
+
+leading_comment_non_ascii_test() ->
+    ?assertEqual([~"café"], marmot:leading_comment(~"-- café\nselect 1")).
+
+leading_comment_blank_line_collapses_test() ->
+    ?assertEqual([~"a", ~"b"], marmot:leading_comment(~"-- a\n\n-- b\nselect 1")).
+
+leading_comment_bare_dashes_test() ->
+    ?assertEqual(
+        [~"a", ~"", ~"b"], marmot:leading_comment(~"-- a\n--\n-- b\nselect 1")
+    ).
+
+leading_comment_leading_blank_lines_test() ->
+    ?assertEqual([~"a"], marmot:leading_comment(~"\n\n-- a\nselect 1")).
+
+leading_comment_strips_indentation_test() ->
+    ?assertEqual([~"indented"], marmot:leading_comment(~"--   indented\nselect 1")).

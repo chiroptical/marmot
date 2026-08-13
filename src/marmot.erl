@@ -10,6 +10,7 @@ TODO
 
 -export([
     from_file/1,
+    leading_comment/1,
     infer_types/1,
     parameters_and_returns/1,
     resolve_parameters/2,
@@ -28,7 +29,8 @@ TODO
     starting_line = 0 :: integer(),
     % TODO: root_name should be binary
     root_name = "" :: file:filename_all(),
-    file_content = <<>> :: binary()
+    file_content = <<>> :: binary(),
+    doc = [] :: [binary()]
 }).
 -export_record([untyped_query]).
 
@@ -70,7 +72,8 @@ from_file(FileName) ->
             input_file_name = FileName,
             starting_line = 1,
             root_name = RootName,
-            file_content = Content
+            file_content = Content,
+            doc = leading_comment(Content)
         }}
     else
         {error, Reason} -> {error, Reason}
@@ -83,8 +86,25 @@ from_file(FileName) ->
     root_name :: file:filename_all(),
     content :: binary(),
     params :: list(type()),
-    returns :: list(#field{})
+    returns :: list(#field{}),
+    doc = [] :: [binary()]
 }.
+
+-spec leading_comment(binary()) -> [binary()].
+leading_comment(Content) ->
+    case iolist_to_binary(string:trim(Content, leading)) of
+        <<"--", Rest/binary>> ->
+            case binary:split(Rest, ~"\n") of
+                [Line, Tail] -> [trim(Line) | leading_comment(Tail)];
+                [Line] -> [trim(Line)]
+            end;
+        _ ->
+            []
+    end.
+
+-spec trim(binary()) -> binary().
+trim(Line) ->
+    iolist_to_binary(string:trim(Line)).
 
 -doc """
 1. Ask postgres for information about query parameters and returned rows
@@ -104,7 +124,8 @@ infer_types(UntypedQuery = #untyped_query{}) ->
         root_name = UntypedQuery#untyped_query.root_name,
         content = UntypedQuery#untyped_query.file_content,
         params = [],
-        returns = []
+        returns = [],
+        doc = UntypedQuery#untyped_query.doc
     }}.
 
 -doc """
