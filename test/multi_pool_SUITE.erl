@@ -3,7 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
--import_record(marmot, [untyped_query, field]).
+-import_record(marmot, [untyped_query, field, typed_query]).
 -import_record(marmot_config, [config]).
 
 -export([
@@ -55,14 +55,12 @@ end_per_testcase(_TestCase, Config) ->
     Config.
 
 -doc """
-Run the full inference path (`protocol:prepare_statement/2` ->
-`marmot:resolve_parameters/2` -> `query_plan:from_untyped_query/2` ->
-`query_plan:nullables_from_plan/1` -> `marmot:resolve_returns/3`) repeatedly
-on two independent pools, one process each, concurrently. If pool
-configuration were still implicit (e.g. a shared `default` pool), this would
-either fail outright or nondeterministically cross-talk between the two
-processes; with an explicit `#config{}` threaded through, both should
-consistently and independently produce the same correct result.
+Run the full inference path (`marmot:infer_types/2`) repeatedly on two
+independent pools, one process each, concurrently. If pool configuration
+were still implicit (e.g. a shared `default` pool), this would either fail
+outright or nondeterministically cross-talk between the two processes; with
+an explicit `#config{}` threaded through, both should consistently and
+independently produce the same correct result.
 """.
 -spec concurrent_inference(term()) -> ok.
 concurrent_inference(Config) ->
@@ -95,14 +93,8 @@ run_iterations(MarmotConfig) ->
     [run_once(MarmotConfig) || _ <- lists:seq(1, ?ITERATIONS)].
 
 run_once(MarmotConfig) ->
-    maybe
-        {ok, ParamOids, Fields} ?= protocol:prepare_statement(MarmotConfig, ?STATEMENT),
-        {ok, [int]} ?= marmot:resolve_parameters(MarmotConfig, ParamOids),
-        {ok, Plan} ?=
-            query_plan:from_untyped_query(MarmotConfig, #untyped_query{file_content = ?STATEMENT}),
-        Nullables = query_plan:nullables_from_plan(Plan),
-        marmot:resolve_returns(MarmotConfig, Fields, Nullables)
-    else
+    case marmot:infer_types(MarmotConfig, #untyped_query{file_content = ?STATEMENT}) of
+        {ok, #typed_query{params = [int], returns = Returns}} -> {ok, Returns};
         {error, _} = E -> E
     end.
 

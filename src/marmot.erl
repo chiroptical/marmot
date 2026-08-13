@@ -11,8 +11,7 @@ TODO
 -export([
     from_file/1,
     leading_comment/1,
-    infer_types/1,
-    parameters_and_returns/1,
+    infer_types/2,
     resolve_parameters/2,
     resolve_returns/3,
     column_name_to_identifier/1,
@@ -55,6 +54,18 @@ TODO
 }.
 -export_record([field]).
 
+-record #typed_query{
+    input_file_name :: string(),
+    starting_line :: integer(),
+    % TODO: root_name should be binary
+    root_name :: file:filename_all(),
+    content :: binary(),
+    params :: list(type()),
+    returns :: list(#field{}),
+    doc = [] :: [binary()]
+}.
+-export_record([typed_query]).
+
 -doc """
 Given a `string()`, attempt to read the file and generate an `#untyped_query{}`.
 The code assumes this is a semi-valid SQL file, i.e. it will attempt to separate
@@ -79,17 +90,6 @@ from_file(FileName) ->
         {error, Reason} -> {error, Reason}
     end.
 
--record #typed_query{
-    input_file_name :: string(),
-    starting_line :: integer(),
-    % TODO: root_name should be binary
-    root_name :: file:filename_all(),
-    content :: binary(),
-    params :: list(type()),
-    returns :: list(#field{}),
-    doc = [] :: [binary()]
-}.
-
 -spec leading_comment(binary()) -> [binary()].
 leading_comment(Content) ->
     case iolist_to_binary(string:trim(Content, leading)) of
@@ -111,42 +111,47 @@ trim(Line) ->
 2. The parameters will allows us to turn OIDs into Erlang `type()`
 3. Return types will give us OIDs too, but we can't know nullability
    without reading the query plan
-Q: If we are unable to form a query plan, e.g. with a `do`, just assume
-   the returns are nullable?
+If Postgres cannot form a query plan for the statement, nullability falls
+back to `pg_attribute.attnotnull` plus the `!`/`?` column-name suffixes
+rather than assuming every returned column is nullable.
 """.
--spec infer_types(#untyped_query{}) ->
-    {ok, #typed_query{}}
-    | {error, Reason :: string()}.
-infer_types(UntypedQuery = #untyped_query{}) ->
-    {ok, #typed_query{
-        input_file_name = UntypedQuery#untyped_query.input_file_name,
-        starting_line = UntypedQuery#untyped_query.starting_line,
-        root_name = UntypedQuery#untyped_query.root_name,
-        content = UntypedQuery#untyped_query.file_content,
-        params = [],
-        returns = [],
-        doc = UntypedQuery#untyped_query.doc
-    }}.
+-spec infer_types(#config{}, #untyped_query{}) ->
+    {ok, #typed_query{}} | {error, term()}.
+infer_types(Config, UntypedQuery = #untyped_query{file_content = Content}) ->
+    maybe
+        {ok, ParamOids, Fields} ?= protocol:prepare_statement(Config, Content),
+        {ok, Params} ?= resolve_parameters(Config, ParamOids),
+        {ok, Nullables} ?= nullables(Config, UntypedQuery),
+        {ok, Returns} ?= resolve_returns(Config, Fields, Nullables),
+        {ok, #typed_query{
+            input_file_name = UntypedQuery#untyped_query.input_file_name,
+            starting_line = UntypedQuery#untyped_query.starting_line,
+            root_name = UntypedQuery#untyped_query.root_name,
+            content = Content,
+            params = Params,
+            returns = Returns,
+            doc = UntypedQuery#untyped_query.doc
+        }}
+    else
+        {error, _} = E -> E
+    end.
 
--doc """
-1. Need a connection to make queries
-2. pgo_protocol:encode_parse_message/3
-3. pgo_protocol:encode_describe_message/2
-4. pgo_protocol:encode_sync_message/0
-5.
-SocketModule can be ssl or gen_tcp, ideally we just have a pgo connection
-case SocketModule:send(Socket, pgo_protocol:encode...(...)) of
-    ok ->
-        receive_message(SocketModule, Socket, Pool, []);
-    {error, _} = SendError ->
-        SendError
-end.
-""".
--spec parameters_and_returns(#untyped_query{}) ->
-    {ok, nil}
-    | {error, Reason :: string()}.
-parameters_and_returns(_UntypedQuery = #untyped_query{}) ->
-    {ok, nil}.
+-spec nullables(#config{}, #untyped_query{}) ->
+    {ok, sets:set(non_neg_integer())} | {error, term()}.
+nullables(Config, UntypedQuery) ->
+    case query_plan:from_untyped_query(Config, UntypedQuery) of
+        {ok, Plan} ->
+            {ok, query_plan:nullables_from_plan(Plan)};
+        {error, {explain_failed, Fields}} ->
+            logger:notice(#{
+                what => explain_failed,
+                file => UntypedQuery#untyped_query.input_file_name,
+                fields => Fields
+            }),
+            {ok, sets:new()};
+        {error, _} = E ->
+            E
+    end.
 
 -doc """
 Given a list of OIDs, resolve all of the OIDs to Erlang types. If we are unable
