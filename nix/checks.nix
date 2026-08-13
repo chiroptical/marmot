@@ -1,0 +1,106 @@
+{
+  stdenv,
+  beam29Packages,
+  postgresql,
+  postgresqlTestHook,
+  callPackage,
+  src,
+}:
+let
+  deps = callPackage ./deps.nix { };
+
+  rebar3Check =
+    {
+      name,
+      nativeBuildInputs ? [ ],
+      ...
+    }@args:
+    stdenv.mkDerivation (
+      args
+      // {
+        inherit src;
+
+        nativeBuildInputs = [
+          beam29Packages.erlang
+          beam29Packages.rebar3
+        ]
+        ++ nativeBuildInputs;
+
+        configurePhase = ''
+          runHook preConfigure
+          export HOME="$NIX_BUILD_TOP"
+          cp --no-preserve=all -R ${deps} _checkouts
+          runHook postConfigure
+        '';
+
+        dontBuild = true;
+        doCheck = true;
+
+        installPhase = ''
+          runHook preInstall
+          touch "$out"
+          runHook postInstall
+        '';
+      }
+    );
+in
+{
+  format = stdenv.mkDerivation {
+    name = "marmot-format";
+    inherit src;
+    nativeBuildInputs = [ beam29Packages.erlfmt ];
+    dontConfigure = true;
+    dontBuild = true;
+    doCheck = true;
+    checkPhase = ''
+      runHook preCheck
+      erlfmt --check
+      runHook postCheck
+    '';
+    installPhase = ''
+      runHook preInstall
+      touch "$out"
+      runHook postInstall
+    '';
+  };
+
+  eunit = rebar3Check {
+    name = "marmot-eunit";
+    checkPhase = ''
+      runHook preCheck
+      rebar3 eunit
+      runHook postCheck
+    '';
+  };
+
+  ct = rebar3Check {
+    name = "marmot-ct";
+
+    nativeBuildInputs = [
+      postgresql
+      postgresqlTestHook
+    ];
+
+    postgresqlEnableTCP = 1;
+    postgresqlExtraSettings = ''
+      port = 5432
+    '';
+
+    PGUSER = "marmot";
+    PGDATABASE = "marmot";
+    postgresqlTestUserOptions = "LOGIN PASSWORD 'marmot' SUPERUSER";
+
+    PGO_HOST = "127.0.0.1";
+    PGO_PORT = "5432";
+    PGO_USER = "marmot";
+    PGO_DATABASE = "marmot";
+    PGO_PASSWORD = "marmot";
+    PGO_POOL_SIZE = "1";
+
+    checkPhase = ''
+      runHook preCheck
+      rebar3 ct
+      runHook postCheck
+    '';
+  };
+}
