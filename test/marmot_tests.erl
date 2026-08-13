@@ -3,6 +3,12 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
+-import_record(marmot_config, [config]).
+
+config() ->
+    {module, marmot_config} = code:ensure_loaded(marmot_config),
+    #config{}.
+
 name_int2_test() ->
     ?assertEqual({ok, int}, marmot:name_to_type(~"int2")).
 name_int4_test() ->
@@ -58,24 +64,27 @@ name_unknown_test() ->
     ).
 
 array_of_int_test() ->
+    MarmotConfig = config(),
     BaseInfo = base_type_info(),
     Info = BaseInfo#type_info{
         module = pg_array,
         name = ~"_int4",
         elem_type = BaseInfo#type_info{module = pg_int4, name = ~"int4"}
     },
-    ?assertEqual({ok, {list, int}}, marmot:type_info_to_type(Info)).
+    ?assertEqual({ok, {list, int}}, marmot:type_info_to_type(MarmotConfig, Info)).
 
 array_of_text_test() ->
+    MarmotConfig = config(),
     BaseInfo = base_type_info(),
     Info = BaseInfo#type_info{
         module = pg_array,
         name = ~"_text",
         elem_type = BaseInfo#type_info{module = pg_raw, name = ~"text"}
     },
-    ?assertEqual({ok, {list, bit_array}}, marmot:type_info_to_type(Info)).
+    ?assertEqual({ok, {list, bit_array}}, marmot:type_info_to_type(MarmotConfig, Info)).
 
 nested_array_of_int_test() ->
+    MarmotConfig = config(),
     BaseInfo = base_type_info(),
     Inner = BaseInfo#type_info{
         module = pg_array,
@@ -87,7 +96,7 @@ nested_array_of_int_test() ->
         name = ~"__int4",
         elem_type = Inner
     },
-    ?assertEqual({ok, {list, {list, int}}}, marmot:type_info_to_type(Outer)).
+    ?assertEqual({ok, {list, {list, int}}}, marmot:type_info_to_type(MarmotConfig, Outer)).
 
 base_type_info() ->
     #type_info{
@@ -109,7 +118,7 @@ base_type_info() ->
     }.
 
 empty_params_test() ->
-    ?assertEqual({ok, []}, marmot:resolve_parameters([])).
+    ?assertEqual({ok, []}, marmot:resolve_parameters(config(), [])).
 
 identifier_plain_test() ->
     ?assertEqual({ok, name}, marmot:column_name_to_identifier(~"name")).
@@ -163,7 +172,7 @@ nullability_override_empty_test() ->
     ?assertEqual(none, marmot:nullability_override(~"")).
 
 empty_returns_test() ->
-    ?assertEqual({ok, []}, marmot:resolve_returns([], sets:new([{version, 2}]))).
+    ?assertEqual({ok, []}, marmot:resolve_returns(config(), [], sets:new([{version, 2}]))).
 
 empty_nullability_map_test() ->
-    ?assertEqual({ok, #{}}, marmot:nullability_map([])).
+    ?assertEqual({ok, #{}}, marmot:nullability_map(config(), [])).

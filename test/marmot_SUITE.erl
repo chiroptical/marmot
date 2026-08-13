@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import_record(marmot, [untyped_query, field]).
+-import_record(marmot_config, [config]).
 
 -export([
     all/0,
@@ -69,50 +70,42 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    {ok, _} = application:ensure_all_started(pgo),
-    FixtureConfig = #{
-        pool_size => 1,
-        host => os:getenv("PGO_HOST", "127.0.0.1"),
-        database => os:getenv("PGO_DATABASE", "marmot"),
-        user => os:getenv("PGO_USER", "marmot"),
-        password => os:getenv("PGO_PASSWORD", "marmot")
-    },
-    {ok, _} = pgo:start_pool(fixture, FixtureConfig),
-    drop_tables(),
+    MarmotConfig = #config{pool = Pool} = marmot_config:from_env(),
+    ok = protocol:prepare_pool(MarmotConfig),
+    drop_tables(Pool),
     [
-        pgo:query("drop type if exists " ++ atom_to_list(N), [], #{pool => fixture})
+        pgo:query("drop type if exists " ++ atom_to_list(N), [], #{pool => Pool})
      || N <- [mood, color, weird]
     ],
     #{command := create} =
-        pgo:query("create type mood as enum ('happy', 'sad', 'meh')", [], #{pool => fixture}),
+        pgo:query("create type mood as enum ('happy', 'sad', 'meh')", [], #{pool => Pool}),
     #{command := create} =
-        pgo:query("create type color as enum ('red', 'green', 'blue')", [], #{pool => fixture}),
+        pgo:query("create type color as enum ('red', 'green', 'blue')", [], #{pool => Pool}),
     #{command := create} =
         pgo:query("create type weird as enum ('a-b', 'not allowed', 'UPPER')", [], #{
-            pool => fixture
+            pool => Pool
         }),
     #{command := create} =
         pgo:query(
             "create table mr_left (id int not null, name text, tally int not null)",
             [],
-            #{pool => fixture}
+            #{pool => Pool}
         ),
     #{command := create} =
-        pgo:query("create table mr_right (id int not null, value text)", [], #{pool => fixture}),
-    ok = protocol:prepare_pool(),
-    ok = marmot_test_helpers:wait_for_types(default),
-    ok = query_plan:ensure_postgres_version(),
+        pgo:query("create table mr_right (id int not null, value text)", [], #{pool => Pool}),
+    ok = query_plan:ensure_postgres_version(MarmotConfig),
     {module, marmot} = code:ensure_loaded(marmot),
-    Config.
+    [{marmot_config, MarmotConfig} | Config].
 
-end_per_suite(_Config) ->
-    drop_tables(),
+end_per_suite(Config) ->
+    #config{pool = Pool} = proplists:get_value(marmot_config, Config),
+    drop_tables(Pool),
     application:stop(pgo),
     ok.
 
-drop_tables() ->
+drop_tables(Pool) ->
     [
-        pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => fixture})
+        pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
      || N <- ?TABLES
     ],
     ok.
@@ -127,151 +120,178 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, Config) ->
     Config.
 
-simple_types(_Config) ->
+simple_types(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} =
-        protocol:prepare_statement(~"select $1::integer, $2::text, $3::uuid, $4::bool"),
-    {ok, [int, bit_array, uuid, bool]} = marmot:resolve_parameters(ParamOids).
+        protocol:prepare_statement(
+            MarmotConfig, ~"select $1::integer, $2::text, $3::uuid, $4::bool"
+        ),
+    {ok, [int, bit_array, uuid, bool]} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-array_of_int(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::integer[]"),
-    {ok, [{list, int}]} = marmot:resolve_parameters(ParamOids).
+array_of_int(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::integer[]"),
+    {ok, [{list, int}]} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-array_of_text(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::text[]"),
-    {ok, [{list, bit_array}]} = marmot:resolve_parameters(ParamOids).
+array_of_text(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::text[]"),
+    {ok, [{list, bit_array}]} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-multidimensional_array(_Config) ->
+multidimensional_array(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} = protocol:prepare_statement(
-        ~"select $1::integer[][], $2::integer[][][]"
+        MarmotConfig, ~"select $1::integer[][], $2::integer[][][]"
     ),
-    {ok, [{list, int}, {list, int}]} = marmot:resolve_parameters(ParamOids).
+    {ok, [{list, int}, {list, int}]} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-enum_param(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::mood"),
-    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}]} = marmot:resolve_parameters(ParamOids).
-
-enum_array_param(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::mood[]"),
-    {ok, [{list, {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}]} = marmot:resolve_parameters(
-        ParamOids
+enum_param(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood"),
+    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}]} = marmot:resolve_parameters(
+        MarmotConfig, ParamOids
     ).
 
-enum_mixed(_Config) ->
-    {ok, ParamOids, _Fields} =
-        protocol:prepare_statement(~"select $1::mood, $2::integer, $3::text"),
-    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}, int, bit_array]} =
-        marmot:resolve_parameters(ParamOids).
+enum_array_param(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood[]"),
+    {ok, [{list, {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}]} = marmot:resolve_parameters(
+        MarmotConfig, ParamOids
+    ).
 
-two_distinct_enums(_Config) ->
+enum_mixed(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} =
-        protocol:prepare_statement(~"select $1::mood, $2::color"),
+        protocol:prepare_statement(MarmotConfig, ~"select $1::mood, $2::integer, $3::text"),
+    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}, int, bit_array]} =
+        marmot:resolve_parameters(MarmotConfig, ParamOids).
+
+two_distinct_enums(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} =
+        protocol:prepare_statement(MarmotConfig, ~"select $1::mood, $2::color"),
     {ok, [
         {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}, {enum, ~"color", [~"red", ~"green", ~"blue"]}
     ]} =
-        marmot:resolve_parameters(ParamOids).
+        marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-enum_tricky_labels(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::weird"),
+enum_tricky_labels(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::weird"),
     {ok, [{enum, ~"weird", [~"a-b", ~"not allowed", ~"UPPER"]}]} =
-        marmot:resolve_parameters(ParamOids).
+        marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-enum_resolve_deterministic(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select $1::mood"),
-    First = marmot:resolve_parameters(ParamOids),
-    Second = marmot:resolve_parameters(ParamOids),
+enum_resolve_deterministic(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood"),
+    First = marmot:resolve_parameters(MarmotConfig, ParamOids),
+    Second = marmot:resolve_parameters(MarmotConfig, ParamOids),
     ?assertEqual({ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}]}, First),
     ?assertEqual(First, Second).
 
-unknown_oid(_Config) ->
+unknown_oid(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {error, {unsupported_type, ?BOGUS_OID}},
-        marmot:resolve_parameters([?BOGUS_OID])
+        marmot:resolve_parameters(MarmotConfig, [?BOGUS_OID])
     ).
 
-empty_params(_Config) ->
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(~"select 1"),
-    {ok, []} = marmot:resolve_parameters(ParamOids).
+empty_params(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select 1"),
+    {ok, []} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
 no_nullables() ->
     sets:new([{version, 2}]).
 
-returns_for(Statement) ->
-    {ok, _ParamOids, Fields} = protocol:prepare_statement(Statement),
-    marmot:resolve_returns(Fields, no_nullables()).
+returns_for(MarmotConfig, Statement) ->
+    {ok, _ParamOids, Fields} = protocol:prepare_statement(MarmotConfig, Statement),
+    marmot:resolve_returns(MarmotConfig, Fields, no_nullables()).
 
-returns_with_plan(Statement) ->
-    {ok, _ParamOids, Fields} = protocol:prepare_statement(Statement),
-    {ok, Plan} = query_plan:from_untyped_query(#untyped_query{file_content = Statement}),
-    marmot:resolve_returns(Fields, query_plan:nullables_from_plan(Plan)).
+returns_with_plan(MarmotConfig, Statement) ->
+    {ok, _ParamOids, Fields} = protocol:prepare_statement(MarmotConfig, Statement),
+    {ok, Plan} = query_plan:from_untyped_query(MarmotConfig, #untyped_query{
+        file_content = Statement
+    }),
+    marmot:resolve_returns(MarmotConfig, Fields, query_plan:nullables_from_plan(Plan)).
 
-returns_simple(_Config) ->
+returns_simple(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
             #field{identifier = a, type = int},
             #field{identifier = b, type = bit_array}
         ]},
-        returns_for(~"select $1::integer as a, $2::text as b")
+        returns_for(MarmotConfig, ~"select $1::integer as a, $2::text as b")
     ).
 
-returns_not_null_column(_Config) ->
+returns_not_null_column(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [#field{identifier = id, type = int}]},
-        returns_for(~"select id from mr_left")
+        returns_for(MarmotConfig, ~"select id from mr_left")
     ).
 
-returns_nullable_column(_Config) ->
+returns_nullable_column(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [#field{identifier = name, type = {option, bit_array}}]},
-        returns_for(~"select name from mr_left")
+        returns_for(MarmotConfig, ~"select name from mr_left")
     ).
 
-returns_left_join_nullable(_Config) ->
+returns_left_join_nullable(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
             #field{identifier = tally, type = int},
             #field{identifier = id, type = {option, int}}
         ]},
         returns_with_plan(
-            ~"select l.tally, r.id from mr_left l left join mr_right r on l.id = r.id"
+            MarmotConfig, ~"select l.tally, r.id from mr_left l left join mr_right r on l.id = r.id"
         )
     ).
 
-returns_suffix_overrides(_Config) ->
+returns_suffix_overrides(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
             #field{identifier = id, type = bit_array},
             #field{identifier = v, type = {option, int}}
         ]},
-        returns_for(~"select name as \"id!\", tally as \"v?\" from mr_left")
+        returns_for(MarmotConfig, ~"select name as \"id!\", tally as \"v?\" from mr_left")
     ).
 
-returns_enum(_Config) ->
+returns_enum(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [#field{identifier = m, type = {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}]},
-        returns_for(~"select $1::mood as m")
+        returns_for(MarmotConfig, ~"select $1::mood as m")
     ).
 
-returns_array(_Config) ->
+returns_array(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
             #field{identifier = xs, type = {list, int}},
             #field{identifier = ms, type = {list, {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}}
         ]},
-        returns_for(~"select $1::integer[] as xs, $2::mood[] as ms")
+        returns_for(MarmotConfig, ~"select $1::integer[] as xs, $2::mood[] as ms")
     ).
 
-returns_invalid_column_name(_Config) ->
+returns_invalid_column_name(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {error, {invalid_column, ~"Weird Name"}},
-        returns_for(~"select 1 as \"Weird Name\"")
+        returns_for(MarmotConfig, ~"select 1 as \"Weird Name\"")
     ).
 
-returns_batched_nullability(_Config) ->
+returns_batched_nullability(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, _ParamOids, Fields} =
         protocol:prepare_statement(
-            ~"select l.id, l.name, l.tally, r.id, r.value from mr_left l, mr_right r"
+            MarmotConfig, ~"select l.id, l.name, l.tally, r.id, r.value from mr_left l, mr_right r"
         ),
-    {ok, Map} = marmot:nullability_map(Fields),
+    {ok, Map} = marmot:nullability_map(MarmotConfig, Fields),
     ?assertEqual(5, maps:size(Map)),
     ?assertEqual(2, length(lists:uniq([Table || {Table, _} <- maps:keys(Map)]))),
     ?assertEqual(
@@ -279,19 +299,22 @@ returns_batched_nullability(_Config) ->
         lists:sort(maps:values(Map))
     ).
 
-duplicate_output_name_nullability(_Config) ->
+duplicate_output_name_nullability(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
             #field{identifier = value, type = {option, bit_array}},
             #field{identifier = value, type = {option, bit_array}}
         ]},
         returns_with_plan(
+            MarmotConfig,
             ~"select r.value, r.value from mr_left l left join mr_right r on l.id = r.id"
         )
     ).
 
-aggregate_over_empty_table(_Config) ->
+aggregate_over_empty_table(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [#field{identifier = max, type = {option, int}}]},
-        returns_with_plan(~"select max(id) from mr_left")
+        returns_with_plan(MarmotConfig, ~"select max(id) from mr_left")
     ).

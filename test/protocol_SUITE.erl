@@ -2,6 +2,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("pgo/src/pgo_internal.hrl").
 
+-import_record(marmot_config, [config]).
+
 -export([
     all/0,
     init_per_suite/1,
@@ -15,16 +17,18 @@
 all() ->
     [parameterless_query, query_with_parameters].
 
-parameterless_query(_Config) ->
-    {ok, [], Fields} = protocol:prepare_statement(~"select 1 as num"),
+parameterless_query(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, [], Fields} = protocol:prepare_statement(MarmotConfig, ~"select 1 as num"),
     ?assertEqual(1, length(Fields)),
     [NumField] = Fields,
     ?assertEqual(~"num", NumField#row_description_field.name),
     ?assertEqual(23, NumField#row_description_field.data_type_oid).
 
-query_with_parameters(_Config) ->
+query_with_parameters(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, Params, Fields} =
-        protocol:prepare_statement(~"select $1::integer as num, $2::text as label"),
+        protocol:prepare_statement(MarmotConfig, ~"select $1::integer as num, $2::text as label"),
     ?assertEqual([23, 25], Params),
     ?assertEqual(2, length(Fields)),
     [NumField, LabelField] = Fields,
@@ -34,8 +38,10 @@ query_with_parameters(_Config) ->
     ?assertEqual(25, LabelField#row_description_field.data_type_oid).
 
 init_per_suite(Config) ->
+    MarmotConfig = marmot_config:from_env(),
+    ok = protocol:prepare_pool(MarmotConfig),
     ok = protocol:prepare_pool(),
-    Config.
+    [{marmot_config, MarmotConfig} | Config].
 
 end_per_suite(_Config) ->
     application:stop(pgo),

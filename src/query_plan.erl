@@ -9,15 +9,16 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
 -include_lib("pgo/src/pgo_internal.hrl").
 
 -import_record(marmot, [untyped_query]).
+-import_record(marmot_config, [config]).
 
 -define(EXPLAIN_PREFIX, ~"explain (format json, verbose, generic_plan) ").
 -define(MINIMUM_POSTGRES_VERSION, 160000).
 
 -export([
-    from_untyped_query/1,
+    from_untyped_query/2,
     decode_plan/1,
     nullables_from_plan/1,
-    ensure_postgres_version/0,
+    ensure_postgres_version/1,
     check_version/1
 ]).
 
@@ -35,10 +36,10 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
 -doc """
 Given an untyped query, run the EXPLAIN PLAN and decode it.
 """.
--spec from_untyped_query(#untyped_query{}) -> {ok, #plan{}} | {error, term()}.
-from_untyped_query(#untyped_query{file_content = Content}) ->
+-spec from_untyped_query(#config{}, #untyped_query{}) -> {ok, #plan{}} | {error, term()}.
+from_untyped_query(Config, #untyped_query{file_content = Content}) ->
     maybe
-        {ok, Json} ?= protocol:explain(<<?EXPLAIN_PREFIX/binary, Content/binary>>),
+        {ok, Json} ?= protocol:explain(Config, <<?EXPLAIN_PREFIX/binary, Content/binary>>),
         decode_plan(Json)
     else
         {error, _} = E -> E
@@ -136,13 +137,13 @@ outputs_index_map([Name | Rest], I, Acc) ->
 -doc """
 Ensure that the PostgreSQL version is compatible
 """.
--spec ensure_postgres_version() -> ok | {error, term()}.
-ensure_postgres_version() ->
+-spec ensure_postgres_version(#config{}) -> ok | {error, term()}.
+ensure_postgres_version(#config{pool = Pool}) ->
     case
         pgo:query(
             "select current_setting('server_version_num') as v",
             [],
-            #{decode_opts => [return_rows_as_maps]}
+            #{decode_opts => [return_rows_as_maps], pool => Pool}
         )
     of
         #{command := select, rows := [#{~"v" := V}]} ->

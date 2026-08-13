@@ -1,66 +1,109 @@
 -module(protocol).
 -moduledoc """
-    
+
 """.
 
 -include_lib("pgo/src/pgo_internal.hrl").
 
+-import_record(marmot_config, [config]).
+
 -export([
     prepare_pool/0,
-    prepare_statement/1,
-    explain/1
+    prepare_pool/1,
+    await_types/1,
+    prepare_statement/2,
+    explain/2
 ]).
 
 -doc """
-Start the default pgo connection pool. Pool is configured via the following environment variables,
-
-- PGO_HOST, default 127.0.0.1
-- PGO_DATABASE, default marmot
-- PGO_USER, default marmot
-- PGO_PASSWORD, default marmot
-
-## TODO
-
-- We probably want a version which just takes arguments for the rebar plugin
+Start marmot's pgo connection pool from environment variables. Equivalent to
+`prepare_pool(marmot_config:from_env())`. See `marmot_config:from_env/0` for
+the environment variables read and their defaults.
 """.
 -spec prepare_pool() -> ok | {error, term()}.
 prepare_pool() ->
+    prepare_pool(marmot_config:from_env()).
+
+-doc """
+Start (or attach to) marmot's pgo connection pool per `Config`.
+
+- `connection = {some, C}`: start `application:ensure_all_started(pgo)` then
+  `pgo:start_pool(Pool, C)`. A pool already started under this name is treated
+  as success.
+- `connection = none`: the caller already started `Pool`; skip startup.
+
+Either way, waits for `pg_types`' asynchronous type server bootstrap to finish
+before returning.
+""".
+-spec prepare_pool(#config{}) -> ok | {error, term()}.
+prepare_pool(#config{pool = Pool, connection = {some, Connection}}) ->
     maybe
         {ok, _Started} ?= application:ensure_all_started(pgo),
-        {ok, _Pid} ?=
-            pgo:start_pool(default, #{
-                pool_size => 1,
-                host => os:getenv("PGO_HOST", "127.0.0.1"),
-                database => os:getenv("PGO_DATABASE", "marmot"),
-                user => os:getenv("PGO_USER", "marmot"),
-                password => os:getenv("PGO_PASSWORD", "marmot")
-            }),
-        ok
+        ok ?= start_pool(Pool, Connection),
+        await_types(Pool)
     else
         {error, Reason} ->
             logger:notice(Reason),
             {error, ~"Unable to start connection pool"}
+    end;
+prepare_pool(#config{connection = none, pool = Pool}) ->
+    await_types(Pool).
+
+-dialyzer({nowarn_function, start_pool/2}).
+-spec start_pool(pgo:pool(), pgo:pool_config()) -> ok | {error, term()}.
+start_pool(Pool, Connection) ->
+    case pgo:start_pool(Pool, Connection) of
+        {ok, _Pid} -> ok;
+        {error, {already_started, _Pid}} -> ok;
+        {error, _} = Error -> Error
+    end.
+
+-define(TYPE_WAIT_ATTEMPTS, 500).
+-define(TYPE_WAIT_SLEEP_MS, 10).
+
+-doc """
+Block until `Pool`'s `pg_types` type server has bootstrapped, i.e. until OID
+23 (`int4`) resolves. `pg_types` bootstraps its type server asynchronously
+after a pool starts, so callers that query it immediately can otherwise race
+it. Bounded to `?TYPE_WAIT_ATTEMPTS` attempts, `?TYPE_WAIT_SLEEP_MS` apart.
+""".
+-spec await_types(pgo:pool()) -> ok | {error, {type_server_bootstrap_timeout, pgo:pool()}}.
+await_types(Pool) ->
+    await_types(Pool, ?TYPE_WAIT_ATTEMPTS).
+
+-spec await_types(pgo:pool(), non_neg_integer()) ->
+    ok | {error, {type_server_bootstrap_timeout, pgo:pool()}}.
+await_types(Pool, 0) ->
+    {error, {type_server_bootstrap_timeout, Pool}};
+await_types(Pool, N) ->
+    case pg_types:lookup_type_info(Pool, 23) of
+        unknown_oid ->
+            timer:sleep(?TYPE_WAIT_SLEEP_MS),
+            await_types(Pool, N - 1);
+        _ ->
+            ok
     end.
 
 -doc """
 Prepare and describe a SQL statement, returning the parameter OIDs and row
-description fields. Requires that `prepare_pool/0` has been called first.
+description fields. Requires that `prepare_pool/1` has been called first for
+`Config`'s pool.
 
 For example,
 
 ```erlang
-{ok, [23], Fields} = protocol:prepare_statement(~"select $1::integer as num").
+{ok, [23], Fields} = protocol:prepare_statement(Config, ~"select $1::integer as num").
 ```
 
 ## TODO
 
 - Handle errors from `receive_message/4`
 """.
--spec prepare_statement(binary()) ->
+-spec prepare_statement(#config{}, binary()) ->
     {ok, [oid()], [#row_description_field{}]} | {error, binary()}.
-prepare_statement(Statement) ->
+prepare_statement(#config{pool = Pool}, Statement) ->
     maybe
-        {ok, PoolRef, Conn} ?= pgo:checkout(default),
+        {ok, PoolRef, Conn} ?= pgo:checkout(Pool),
         %% pgo's `extended_query` leaves the socket in `{active, once}` for idle
         %% notification monitoring. We use blocking `recv` below, so switch to
         %% `{active, false}` for the duration of the exchange, then restore
@@ -149,10 +192,10 @@ set_active(#conn{socket_module = ssl, socket = Socket}, Mode) ->
 -doc """
 Given a SQL query in `binary()` format generate an EXPLAIN PLAN for the query.
 """.
--spec explain(binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
-explain(Query) ->
+-spec explain(#config{}, binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
+explain(#config{pool = Pool}, Query) ->
     maybe
-        {ok, PoolRef, Conn} ?= pgo:checkout(default),
+        {ok, PoolRef, Conn} ?= pgo:checkout(Pool),
         try
             ok = set_active(Conn, false),
             run_explain(Conn, Query)

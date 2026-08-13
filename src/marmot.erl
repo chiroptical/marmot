@@ -6,19 +6,19 @@ TODO
 -include_lib("pg_types/include/pg_types.hrl").
 -include_lib("pgo/src/pgo_internal.hrl").
 
--define(DEFAULT_POOL, default).
+-import_record(marmot_config, [config]).
 
 -export([
     from_file/1,
     infer_types/1,
     parameters_and_returns/1,
-    resolve_parameters/1,
-    resolve_returns/2,
+    resolve_parameters/2,
+    resolve_returns/3,
     column_name_to_identifier/1,
     nullability_override/1,
-    nullability_map/1,
+    nullability_map/2,
     name_to_type/1,
-    type_info_to_type/1
+    type_info_to_type/2
 ]).
 
 -export_type([type/0]).
@@ -131,21 +131,21 @@ parameters_and_returns(_UntypedQuery = #untyped_query{}) ->
 Given a list of OIDs, resolve all of the OIDs to Erlang types. If we are unable
 to resolve any of the OIDs, the entire functions returns an error tuple.
 """.
--spec resolve_parameters([pos_integer()]) ->
+-spec resolve_parameters(#config{}, [pos_integer()]) ->
     {ok, [type()]} | {error, term()}.
-resolve_parameters(Oids) ->
-    collect([resolve_oid(Oid) || Oid <- Oids]).
+resolve_parameters(Config, Oids) ->
+    collect([resolve_oid(Config, Oid) || Oid <- Oids]).
 
 -doc """
 
 """.
--spec resolve_returns([#row_description_field{}], sets:set(non_neg_integer())) ->
+-spec resolve_returns(#config{}, [#row_description_field{}], sets:set(non_neg_integer())) ->
     {ok, [#field{}]} | {error, term()}.
-resolve_returns(Fields, Nullables) ->
+resolve_returns(Config, Fields, Nullables) ->
     maybe
-        {ok, NotNull} ?= nullability_map(Fields),
+        {ok, NotNull} ?= nullability_map(Config, Fields),
         collect([
-            resolve_return(Field, Index, Nullables, NotNull)
+            resolve_return(Config, Field, Index, Nullables, NotNull)
          || {Index, Field} <- lists:enumerate(0, Fields)
         ])
     else
@@ -153,14 +153,14 @@ resolve_returns(Fields, Nullables) ->
     end.
 
 -spec resolve_return(
-    #row_description_field{}, non_neg_integer(), sets:set(non_neg_integer()), map()
+    #config{}, #row_description_field{}, non_neg_integer(), sets:set(non_neg_integer()), map()
 ) ->
     {ok, #field{}} | {error, term()}.
-resolve_return(Field, Index, Nullables, NotNull) ->
+resolve_return(Config, Field, Index, Nullables, NotNull) ->
     Name = iolist_to_binary(Field#row_description_field.name),
     maybe
         {ok, Identifier} ?= column_name_to_identifier(Name),
-        {ok, Type} ?= resolve_oid(Field#row_description_field.data_type_oid),
+        {ok, Type} ?= resolve_oid(Config, Field#row_description_field.data_type_oid),
         Wrapped =
             case is_nullable(Name, Index, Field, Nullables, NotNull) of
                 true -> {option, Type};
@@ -246,9 +246,9 @@ order by t.ord
 
 -doc """
 """.
--spec nullability_map([#row_description_field{}]) ->
+-spec nullability_map(#config{}, [#row_description_field{}]) ->
     {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
-nullability_map(Fields) ->
+nullability_map(Config, Fields) ->
     Pairs = lists:uniq([
         {TableOid, AttrNumber}
      || #row_description_field{table_oid = TableOid, attr_number = AttrNumber} <- Fields,
@@ -256,15 +256,15 @@ nullability_map(Fields) ->
     ]),
     case Pairs of
         [] -> {ok, #{}};
-        _ -> query_nullability(Pairs)
+        _ -> query_nullability(Config, Pairs)
     end.
 
--spec query_nullability([{integer(), integer()}]) ->
+-spec query_nullability(#config{}, [{integer(), integer()}]) ->
     {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
-query_nullability(Pairs) ->
+query_nullability(#config{pool = Pool}, Pairs) ->
     Relations = [Relation || {Relation, _} <- Pairs],
     Numbers = [Number || {_, Number} <- Pairs],
-    Options = #{decode_opts => [return_rows_as_maps]},
+    Options = #{decode_opts => [return_rows_as_maps], pool => Pool},
     case pgo:query(?NULLABILITY_SQL, [Relations, Numbers], Options) of
         #{command := select, rows := Rows} when length(Rows) =:= length(Pairs) ->
             NotNullByPair =
@@ -277,25 +277,25 @@ query_nullability(Pairs) ->
             {error, {nullability_lookup_failed, Pairs}}
     end.
 
--spec resolve_oid(pos_integer()) ->
+-spec resolve_oid(#config{}, pos_integer()) ->
     {ok, type()} | {error, term()}.
-resolve_oid(Oid) ->
-    case pg_types:lookup_type_info(?DEFAULT_POOL, Oid) of
+resolve_oid(Config = #config{pool = Pool}, Oid) ->
+    case pg_types:lookup_type_info(Pool, Oid) of
         unknown_oid -> {error, {unsupported_type, Oid}};
-        #type_info{} = Info -> type_info_to_type(Info)
+        #type_info{} = Info -> type_info_to_type(Config, Info)
     end.
 
 -doc """
 Postgres may send us arrays, enums, or names. This function dispatches to the
 appropriate handler for the recieved type information.
 """.
--spec type_info_to_type(#type_info{}) ->
+-spec type_info_to_type(#config{}, #type_info{}) ->
     {ok, type()} | {error, term()}.
-type_info_to_type(#type_info{module = pg_array} = Info) ->
-    resolve_array(Info);
-type_info_to_type(#type_info{module = pg_enum} = Info) ->
-    resolve_enum(Info);
-type_info_to_type(#type_info{name = Name}) ->
+type_info_to_type(Config, #type_info{module = pg_array} = Info) ->
+    resolve_array(Config, Info);
+type_info_to_type(Config, #type_info{module = pg_enum} = Info) ->
+    resolve_enum(Config, Info);
+type_info_to_type(_Config, #type_info{name = Name}) ->
     name_to_type(Name).
 
 -doc """
@@ -303,19 +303,19 @@ For an array, we'll either have elem_type or we'll need to lookup the OID. Once
 we have that, we can recursively call `type_info_to_type` until we resolve the
 elements OID.
 """.
--spec resolve_array(#type_info{}) ->
+-spec resolve_array(#config{}, #type_info{}) ->
     {ok, type()} | {error, term()}.
-resolve_array(Info) ->
+resolve_array(Config = #config{pool = Pool}, Info) ->
     Elem =
         case Info#type_info.elem_type of
-            undefined -> pg_types:lookup_type_info(?DEFAULT_POOL, Info#type_info.elem_oid);
+            undefined -> pg_types:lookup_type_info(Pool, Info#type_info.elem_oid);
             Other -> Other
         end,
     case Elem of
         unknown_oid ->
             {error, {unsupported_type, Info#type_info.elem_oid}};
         #type_info{} = E1 ->
-            case type_info_to_type(E1) of
+            case type_info_to_type(Config, E1) of
                 {ok, T} -> {ok, {list, T}};
                 Err -> Err
             end
@@ -354,14 +354,14 @@ name_to_type(Name) -> {error, {unsupported_type, Name}}.
 -doc """
 For enums, gather all the potential labels for the enum via pg_enum table
 """.
--spec resolve_enum(#type_info{}) ->
+-spec resolve_enum(#config{}, #type_info{}) ->
     {ok, type()} | {error, term()}.
-resolve_enum(#type_info{oid = Oid, name = Name}) ->
+resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
     case
         pgo:query(
             "select enumlabel from pg_enum where enumtypid = $1::integer order by enumsortorder",
             [Oid],
-            #{decode_opts => [return_rows_as_maps]}
+            #{decode_opts => [return_rows_as_maps], pool => Pool}
         )
     of
         #{command := select, rows := Rows} ->
