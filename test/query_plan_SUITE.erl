@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import_record(marmot, [untyped_query]).
+-import_record(marmot_config, [config]).
 -import_record(query_plan, [plan]).
 
 -export([
@@ -29,35 +30,28 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    {ok, _} = application:ensure_all_started(pgo),
-    FixtureConfig = #{
-        pool_size => 1,
-        host => os:getenv("PGO_HOST", "127.0.0.1"),
-        database => os:getenv("PGO_DATABASE", "marmot"),
-        user => os:getenv("PGO_USER", "marmot"),
-        password => os:getenv("PGO_PASSWORD", "marmot")
-    },
-    {ok, _} = pgo:start_pool(fixture, FixtureConfig),
-    [
-        pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => fixture})
-     || N <- [qp_a, qp_b]
-    ],
+    MarmotConfig = #config{pool = Pool} = marmot_config:from_env(),
+    ok = protocol:prepare_pool(MarmotConfig),
+    drop_tables(Pool),
     #{command := create} =
-        pgo:query("create table qp_a (id int, name text)", [], #{pool => fixture}),
+        pgo:query("create table qp_a (id int, name text)", [], #{pool => Pool}),
     #{command := create} =
-        pgo:query("create table qp_b (id int, value text)", [], #{pool => fixture}),
-    ok = protocol:prepare_pool(),
-    ok = marmot_test_helpers:wait_for_types(default),
-    ok = query_plan:ensure_postgres_version(),
+        pgo:query("create table qp_b (id int, value text)", [], #{pool => Pool}),
+    ok = query_plan:ensure_postgres_version(MarmotConfig),
     {module, marmot} = code:ensure_loaded(marmot),
-    Config.
+    [{marmot_config, MarmotConfig} | Config].
 
-end_per_suite(_Config) ->
+end_per_suite(Config) ->
+    #config{pool = Pool} = proplists:get_value(marmot_config, Config),
+    drop_tables(Pool),
+    application:stop(pgo),
+    ok.
+
+drop_tables(Pool) ->
     [
-        pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => fixture})
+        pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
      || N <- [qp_a, qp_b]
     ],
-    application:stop(pgo),
     ok.
 
 init_per_testcase(_TestCase, Config) ->
@@ -66,19 +60,24 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, Config) ->
     Config.
 
-parameterless_query(_Config) ->
+parameterless_query(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, #plan{join_type = none, output = [~"1", ~"2"], plans = []}} =
-        query_plan:from_untyped_query(#untyped_query{file_content = ~"select 1 as a, 2 as b"}).
+        query_plan:from_untyped_query(MarmotConfig, #untyped_query{
+            file_content = ~"select 1 as a, 2 as b"
+        }).
 
-parameterized_query(_Config) ->
+parameterized_query(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, #plan{join_type = none, output = [~"$1"], plans = []}} =
-        query_plan:from_untyped_query(#untyped_query{
+        query_plan:from_untyped_query(MarmotConfig, #untyped_query{
             file_content = ~"select $1::integer as a"
         }).
 
-left_join(_Config) ->
+left_join(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, #plan{join_type = {some, left_join}, plans = Plans}} =
-        query_plan:from_untyped_query(#untyped_query{
+        query_plan:from_untyped_query(MarmotConfig, #untyped_query{
             file_content = ~"select a.name, b.value from qp_a a left join qp_b b on a.id = b.id"
         }),
     ?assertEqual(
@@ -109,6 +108,7 @@ left_join(_Config) ->
         Plans
     ).
 
-invalid_query(_Config) ->
+invalid_query(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
     {error, _} =
-        query_plan:from_untyped_query(#untyped_query{file_content = ~"select from"}).
+        query_plan:from_untyped_query(MarmotConfig, #untyped_query{file_content = ~"select from"}).
