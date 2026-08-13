@@ -110,8 +110,6 @@ drop_tables(Pool) ->
     ],
     ok.
 
-init_per_testcase(duplicate_output_name_nullability, _Config) ->
-    {skip, "TODO: outputs_index_map/1 collapses duplicate column names"};
 init_per_testcase(aggregate_over_empty_table, _Config) ->
     {skip, "TODO: aggregates over zero rows are typed non-null"};
 init_per_testcase(_TestCase, Config) ->
@@ -202,7 +200,7 @@ empty_params(Config) ->
     {ok, []} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
 no_nullables() ->
-    sets:new([{version, 2}]).
+    sets:new().
 
 returns_for(MarmotConfig, Statement) ->
     {ok, _ParamOids, Fields} = protocol:prepare_statement(MarmotConfig, Statement),
@@ -303,12 +301,12 @@ duplicate_output_name_nullability(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
-            #field{identifier = value, type = {option, bit_array}},
-            #field{identifier = value, type = {option, bit_array}}
+            #field{identifier = id, type = {option, int}},
+            #field{identifier = id, type = {option, int}}
         ]},
         returns_with_plan(
             MarmotConfig,
-            ~"select r.value, r.value from mr_left l left join mr_right r on l.id = r.id"
+            ~"select r.id, r.id from mr_left l left join mr_right r on l.id = r.id"
         )
     ).
 

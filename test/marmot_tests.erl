@@ -172,7 +172,7 @@ nullability_override_empty_test() ->
     ?assertEqual(none, marmot:nullability_override(~"")).
 
 empty_returns_test() ->
-    ?assertEqual({ok, []}, marmot:resolve_returns(config(), [], sets:new([{version, 2}]))).
+    ?assertEqual({ok, []}, marmot:resolve_returns(config(), [], sets:new())).
 
 empty_nullability_map_test() ->
     ?assertEqual({ok, #{}}, marmot:nullability_map(config(), [])).

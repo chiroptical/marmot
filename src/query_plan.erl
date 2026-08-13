@@ -82,9 +82,9 @@ Determine the nullable fields in the query from the plan.
 -spec nullables_from_plan(#plan{}) -> sets:set().
 nullables_from_plan(#plan{} = Plan) ->
     Outputs = outputs_index_map(Plan#plan.output),
-    do_nullables_from_plan(Plan, Outputs, sets:new([{version, 2}])).
+    do_nullables_from_plan(Plan, Outputs, sets:new()).
 
--spec do_nullables_from_plan(#plan{}, map(), sets:set()) -> sets:set().
+-spec do_nullables_from_plan(#plan{}, #{binary() => [non_neg_integer()]}, sets:set()) -> sets:set().
 do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryOutputs, Nullables) ->
     case {JoinType, Plans} of
         {{some, full_join}, _} ->
@@ -109,30 +109,28 @@ do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryO
             )
     end.
 
--spec plan_outputs_indices(#plan{}, map()) -> sets:set().
+-spec plan_outputs_indices(#plan{}, #{binary() => [non_neg_integer()]}) -> sets:set().
 plan_outputs_indices(#plan{output = Output}, QueryOutputs) ->
     lists:foldl(
         fun(Name, Acc) ->
             case QueryOutputs of
-                #{Name := I} ->
-                    sets:add_element(I, Acc);
-                #{} ->
-                    Acc
+                #{Name := Indices} -> sets:union(sets:from_list(Indices), Acc);
+                #{} -> Acc
             end
         end,
-        sets:new([{version, 2}]),
+        sets:new(),
         Output
     ).
 
--spec outputs_index_map([binary()]) -> map().
+-spec outputs_index_map([binary()]) -> #{binary() => [non_neg_integer()]}.
 outputs_index_map(Output) ->
-    outputs_index_map(Output, 0, #{}).
-
--spec outputs_index_map([binary()], non_neg_integer(), map()) -> map().
-outputs_index_map([], _I, Acc) ->
-    Acc;
-outputs_index_map([Name | Rest], I, Acc) ->
-    outputs_index_map(Rest, I + 1, Acc#{Name => I}).
+    lists:foldl(
+        fun({Index, Name}, Acc) ->
+            maps:update_with(Name, fun(Indices) -> [Index | Indices] end, [Index], Acc)
+        end,
+        #{},
+        lists:enumerate(0, Output)
+    ).
 
 -doc """
 Ensure that the PostgreSQL version is compatible
