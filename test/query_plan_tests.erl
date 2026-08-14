@@ -213,6 +213,14 @@ decoded_left_join_nullable_test() ->
     {ok, Plan} = query_plan:decode_plan(Json),
     ?assertEqual([1], nullable_indices(Plan)).
 
+duplicate_output_names_test() ->
+    Plan = #plan{
+        join_type = {some, left_join},
+        output = [~"b.v", ~"b.v"],
+        plans = [#plan{output = [~"a.id"]}, #plan{output = [~"b.v"]}]
+    },
+    ?assertEqual([0, 1], nullable_indices(Plan)).
+
 nullable_indices(Plan) ->
     lists:sort(sets:to_list(query_plan:nullables_from_plan(Plan))).
 
