@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--import_record(marmot, [untyped_query, field]).
+-import_record(marmot, [untyped_query, field, typed_query]).
 -import_record(marmot_config, [config]).
 
 -export([
@@ -36,7 +36,12 @@
     returns_invalid_column_name/1,
     returns_batched_nullability/1,
     duplicate_output_name_nullability/1,
-    aggregate_over_empty_table/1
+    aggregate_over_empty_table/1,
+    infer_types_simple/1,
+    infer_types_left_join/1,
+    infer_types_enum/1,
+    infer_types_unplannable/1,
+    infer_types_doc/1
 ]).
 
 -define(BOGUS_OID, 999999999).
@@ -65,7 +70,12 @@ all() ->
         returns_invalid_column_name,
         returns_batched_nullability,
         duplicate_output_name_nullability,
-        aggregate_over_empty_table
+        aggregate_over_empty_table,
+        infer_types_simple,
+        infer_types_left_join,
+        infer_types_enum,
+        infer_types_unplannable,
+        infer_types_doc
     ].
 
 init_per_suite(Config) ->
@@ -315,3 +325,66 @@ aggregate_over_empty_table(Config) ->
         {ok, [#field{identifier = max, type = {option, int}}]},
         returns_with_plan(MarmotConfig, ~"select max(id) from mr_left")
     ).
+
+infer_types_for(MarmotConfig, Statement) ->
+    marmot:infer_types(MarmotConfig, #untyped_query{file_content = Statement}).
+
+infer_types_simple(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, TypedQuery} = infer_types_for(MarmotConfig, ~"select id, name from mr_left"),
+    ?assertEqual([], TypedQuery#typed_query.params),
+    ?assertEqual(
+        [
+            #field{identifier = id, type = int},
+            #field{identifier = name, type = {option, bit_array}}
+        ],
+        TypedQuery#typed_query.returns
+    ).
+
+infer_types_left_join(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, TypedQuery} = infer_types_for(
+        MarmotConfig,
+        ~"select l.tally, r.id from mr_left l left join mr_right r on l.id = r.id"
+    ),
+    ?assertEqual(
+        [
+            #field{identifier = tally, type = int},
+            #field{identifier = id, type = {option, int}}
+        ],
+        TypedQuery#typed_query.returns
+    ).
+
+infer_types_enum(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, TypedQuery} = infer_types_for(MarmotConfig, ~"select $1::mood as m"),
+    ?assertEqual([{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}], TypedQuery#typed_query.params),
+    ?assertEqual(
+        [#field{identifier = m, type = {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}],
+        TypedQuery#typed_query.returns
+    ).
+
+infer_types_unplannable(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, #typed_query{
+            input_file_name = "",
+            starting_line = 0,
+            root_name = "",
+            content = ~"set search_path to public",
+            params = [],
+            returns = [],
+            doc = []
+        }},
+        infer_types_for(MarmotConfig, ~"set search_path to public")
+    ).
+
+infer_types_doc(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    Content = ~"-- a comment\nselect 1 as one",
+    UntypedQuery = #untyped_query{
+        file_content = Content,
+        doc = marmot:leading_comment(Content)
+    },
+    {ok, TypedQuery} = marmot:infer_types(MarmotConfig, UntypedQuery),
+    ?assertEqual([~"a comment"], TypedQuery#typed_query.doc).
