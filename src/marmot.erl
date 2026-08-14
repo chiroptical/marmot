@@ -39,13 +39,14 @@ TODO
     | time_of_day
     | timestamp
     | bit_array
+    | bitstring
     | int
     | float
     | numeric
     | bool
     | json
     | uuid
-    | {enum, Name :: binary(), Variants :: [binary()]}
+    | {enum, Oid :: pos_integer(), Name :: binary(), Variants :: [binary()]}
     | {list, type()}.
 
 -record #field{
@@ -366,8 +367,8 @@ name_to_type(~"char") -> {ok, bit_array};
 name_to_type(~"name") -> {ok, bit_array};
 name_to_type(~"citext") -> {ok, bit_array};
 name_to_type(~"bytea") -> {ok, bit_array};
-name_to_type(~"bit") -> {ok, bit_array};
-name_to_type(~"varbit") -> {ok, bit_array};
+name_to_type(~"bit") -> {ok, bitstring};
+name_to_type(~"varbit") -> {ok, bitstring};
 name_to_type(~"uuid") -> {ok, uuid};
 name_to_type(~"json") -> {ok, json};
 name_to_type(~"jsonb") -> {ok, json};
@@ -391,7 +392,7 @@ resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
         )
     of
         #{command := select, rows := Rows} ->
-            {ok, {enum, Name, [L || #{~"enumlabel" := L} <- Rows]}};
+            {ok, {enum, Oid, Name, [L || #{~"enumlabel" := L} <- Rows]}};
         _ ->
             {error, {unsupported_type, Oid}}
     end.
