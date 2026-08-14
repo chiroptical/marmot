@@ -40,7 +40,6 @@
 ]).
 
 -define(BOGUS_OID, 999999999).
--define(TABLES, [mr_left, mr_right]).
 
 all() ->
     [
@@ -106,7 +105,7 @@ end_per_suite(Config) ->
 drop_tables(Pool) ->
     [
         pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
-     || N <- ?TABLES
+     || N <- [mr_left, mr_right]
     ],
     ok.
 

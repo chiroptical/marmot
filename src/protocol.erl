@@ -4,6 +4,7 @@
 """.
 
 -include_lib("pgo/src/pgo_internal.hrl").
+-include_lib("ssl/src/ssl_api.hrl").
 
 -import_record(marmot_config, [config]).
 
@@ -14,6 +15,10 @@
     prepare_statement/2,
     explain/2
 ]).
+
+-ifdef(TEST).
+-export([set_active/2, with_connection/2, checkout_reason/2]).
+-endif.
 
 -doc """
 Start marmot's pgo connection pool from environment variables. Equivalent to
@@ -43,7 +48,7 @@ prepare_pool(#config{pool = Pool, connection = {some, Connection}}) ->
         await_types(Pool)
     else
         {error, Reason} ->
-            logger:notice(Reason),
+            logger:notice("unable to start connection pool: ~p", [Reason]),
             {error, ~"Unable to start connection pool"}
     end;
 prepare_pool(#config{connection = none, pool = Pool}) ->
@@ -94,37 +99,66 @@ For example,
 ```erlang
 {ok, [23], Fields} = protocol:prepare_statement(Config, ~"select $1::integer as num").
 ```
-
-## TODO
-
-- Handle errors from `receive_message/4`
 """.
 -spec prepare_statement(#config{}, binary()) ->
-    {ok, [oid()], [#row_description_field{}]} | {error, binary()}.
+    {ok, [oid()], [#row_description_field{}]} | {error, term()}.
 prepare_statement(#config{pool = Pool}, Statement) ->
+    with_connection(Pool, fun(Conn) -> run_prepare_statement(Conn, Statement) end).
+
+-spec run_prepare_statement(#conn{}, binary()) ->
+    {ok, [oid()], [#row_description_field{}]} | {error, term()}.
+run_prepare_statement(Conn, Statement) ->
     maybe
-        {ok, PoolRef, Conn} ?= pgo:checkout(Pool),
-        %% pgo's `extended_query` leaves the socket in `{active, once}` for idle
-        %% notification monitoring. We use blocking `recv` below, so switch to
-        %% `{active, false}` for the duration of the exchange, then restore
-        %% `{active, once}` before checkin so pgo resumes its idle handling.
-        ok = set_active(Conn, false),
-        ok ?= parse(Conn, Statement),
-        ok ?= describe(Conn),
-        ok ?= sync(Conn),
-        {ok, #parse_complete{}} ?= receive_message(Conn, []),
+        ok ?= sent(parse(Conn, Statement)),
+        ok ?= sent(describe(Conn)),
+        ok ?= sent(sync(Conn)),
+        ok ?= receive_parse_complete(Conn),
         {ok, #parameter_description{count = _ParamCount, data_types = Params}} ?=
             receive_message(Conn, []),
-        {ok, #row_description{count = _RowCount, fields = Fields}} ?=
-            receive_message(Conn, []),
+        {ok, Fields} ?= receive_row_description_or_no_data(Conn),
         {ok, _} ?= receive_message(Conn, []),
-        ok = set_active(Conn, once),
-        ok ?= pgo:checkin(PoolRef, Conn),
         {ok, Params, Fields}
     else
+        {error, {prepare_failed, _}} = PrepareFailed ->
+            PrepareFailed;
+        {error, {connection_desynced, _}} = Desynced ->
+            Desynced;
         {error, Reason} ->
-            logger:notice(Reason),
+            logger:notice("unexpected failure preparing statement: ~p", [Reason]),
             {error, ~"Something unexpected happened"}
+    end.
+
+-spec receive_parse_complete(#conn{}) -> ok | {error, term()}.
+receive_parse_complete(Conn) ->
+    case receive_message(Conn, []) of
+        {ok, #parse_complete{}} ->
+            ok;
+        {ok, #error_response{fields = Fields}} ->
+            drain_until_ready(Conn),
+            {error, {prepare_failed, Fields}};
+        {ok, Other} ->
+            drain_until_ready(Conn),
+            {error, {unexpected_message, Other}};
+        {error, _} = E ->
+            E
+    end.
+
+-spec receive_row_description_or_no_data(#conn{}) ->
+    {ok, [#row_description_field{}]} | {error, term()}.
+receive_row_description_or_no_data(Conn) ->
+    case receive_message(Conn, []) of
+        {ok, #row_description{count = _RowCount, fields = Fields}} ->
+            {ok, Fields};
+        {ok, #no_data{}} ->
+            {ok, []};
+        {ok, #error_response{fields = Fields}} ->
+            drain_until_ready(Conn),
+            {error, {prepare_failed, Fields}};
+        {ok, Other} ->
+            drain_until_ready(Conn),
+            {error, {unexpected_message, Other}};
+        {error, _} = E ->
+            E
     end.
 
 -define(MESSAGE_HEADER_SIZE, 5).
@@ -156,67 +190,109 @@ receive_message(#conn{socket_module = SocketModule, socket = Socket} = Conn, Dec
     case Result0 of
         {ok, #notification_response{} = _Notification} ->
             receive_message(Conn, DecodeOpts);
+        {ok, #notice_response{} = _Notice} ->
+            receive_message(Conn, DecodeOpts);
         _ ->
             Result0
     end.
 
--type send() :: ok | {error, closed | {timeout, binary() | erlang:iovec()} | inet:posix()}.
+-type gen_tcp_send_return() ::
+    ok | {error, closed | {timeout, binary() | erlang:iovec()} | inet:posix()}.
 
 -doc """
 Send a parse message to postgresql    
 """.
--spec parse(#conn{}, binary()) -> send().
+-spec parse(#conn{}, binary()) -> gen_tcp_send_return().
 parse(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
     SocketModule:send(Socket, pgo_protocol:encode_parse_message("", Query, [])).
 
 -doc """
 Send a describe message to postgresql    
 """.
--spec describe(#conn{}) -> send().
+-spec describe(#conn{}) -> gen_tcp_send_return().
 describe(#conn{socket_module = SocketModule, socket = Socket}) ->
     SocketModule:send(Socket, pgo_protocol:encode_describe_message(statement, "")).
 
 -doc """
 Send a sync message to postgresql    
 """.
--spec sync(#conn{}) -> send().
+-spec sync(#conn{}) -> gen_tcp_send_return().
 sync(#conn{socket_module = SocketModule, socket = Socket}) ->
     SocketModule:send(Socket, pgo_protocol:encode_sync_message()).
 
 -spec set_active(#conn{}, false | once | true) -> ok | {error, term()}.
 set_active(#conn{socket_module = gen_tcp, socket = Socket}, Mode) when is_port(Socket) ->
     inet:setopts(Socket, [{active, Mode}]);
-set_active(#conn{socket_module = ssl, socket = Socket}, Mode) ->
-    ssl:setopts(Socket, [{active, Mode}]).
+set_active(#conn{socket_module = ssl, socket = #sslsocket{} = Socket}, Mode) ->
+    ssl:setopts(Socket, [{active, Mode}]);
+set_active(#conn{socket_module = SocketModule, socket = Socket}, _Mode) ->
+    {error, {unsupported_socket, SocketModule, Socket}}.
 
--doc """
-Given a SQL query in `binary()` format generate an EXPLAIN PLAN for the query.
-""".
--spec explain(#config{}, binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
-explain(#config{pool = Pool}, Query) ->
+-spec with_connection(pgo:pool(), fun((#conn{}) -> Result)) -> Result | {error, term()}.
+with_connection(Pool, Exchange) ->
     maybe
         {ok, PoolRef, Conn} ?= pgo:checkout(Pool),
         try
             ok = set_active(Conn, false),
-            run_explain(Conn, Query)
-        after
-            set_active(Conn, once),
-            pgo:checkin(PoolRef, Conn)
+            Exchange(Conn)
+        of
+            {error, {connection_desynced, Reason}} ->
+                Desynced = checkout_reason(PoolRef, Reason),
+                discard_connection(PoolRef, Conn, Desynced),
+                {error, Desynced};
+            Result ->
+                release_connection(PoolRef, Conn),
+                Result
+        catch
+            Class:Reason:Stacktrace ->
+                discard_connection(PoolRef, Conn, Reason),
+                erlang:raise(Class, Reason, Stacktrace)
         end
     else
-        {error, Reason} ->
-            logger:notice(Reason),
+        {error, CheckoutReason} ->
+            logger:notice("unable to checkout connection: ~p", [CheckoutReason]),
             {error, ~"Unable to checkout connection"}
     end.
 
+-spec release_connection(pgo_pool:ref(), #conn{}) -> ok.
+release_connection(PoolRef, Conn) ->
+    case set_active(Conn, once) of
+        ok ->
+            pgo:checkin(PoolRef, Conn);
+        {error, Reason} ->
+            discard_connection(PoolRef, Conn, Reason)
+    end.
+
+-spec checkout_reason(pgo_pool:ref(), term()) -> term().
+checkout_reason({_Pool, _Ref, _Deadline, Holder}, Reason) ->
+    case ets:info(Holder, size) of
+        undefined -> checkout_deadline_exceeded;
+        _ -> Reason
+    end.
+
+-spec discard_connection(pgo_pool:ref(), #conn{}, term()) -> ok.
+discard_connection(PoolRef, Conn, Reason) ->
+    logger:notice("discarding connection: ~p", [Reason]),
+    pgo_pool:disconnect(PoolRef, {error, connection_desynced}, Conn, []).
+
+-spec sent(gen_tcp_send_return()) -> ok | {error, {connection_desynced, term()}}.
+sent(ok) ->
+    ok;
+sent({error, Reason}) ->
+    {error, {connection_desynced, Reason}}.
+
+-spec explain(#config{}, binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
+explain(#config{pool = Pool}, Query) ->
+    with_connection(Pool, fun(Conn) -> run_explain(Conn, Query) end).
+
 -spec run_explain(#conn{}, binary()) -> {ok, binary()} | {error, term()}.
 run_explain(Conn, Query) ->
-    case simple_query(Conn, Query) of
+    case sent(simple_query(Conn, Query)) of
         ok -> receive_explain_messages(Conn);
         {error, _} = E -> E
     end.
 
--spec simple_query(#conn{}, binary()) -> send().
+-spec simple_query(#conn{}, binary()) -> gen_tcp_send_return().
 simple_query(#conn{socket_module = SocketModule, socket = Socket}, Query) ->
     SocketModule:send(Socket, pgo_protocol:encode_query_message(Query)).
 
