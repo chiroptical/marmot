@@ -18,7 +18,9 @@ TODO
     nullability_override/1,
     nullability_map/2,
     name_to_type/1,
-    type_info_to_type/2
+    type_info_to_type/2,
+    explain_error_kind/1,
+    format_error/1
 ]).
 
 -export_type([type/0, enum/0]).
@@ -146,14 +148,32 @@ nullables(Config, UntypedQuery) ->
         {ok, Plan} ->
             {ok, query_plan:nullables_from_plan(Plan)};
         {error, {explain_failed, Fields}} ->
-            logger:notice(#{
-                what => explain_failed,
-                file => UntypedQuery#untyped_query.input_file_name,
-                fields => Fields
-            }),
-            {ok, sets:new()};
+            case explain_error_kind(Fields) of
+                {non_dml, Keyword} ->
+                    {error, {non_dml_statement, Keyword}};
+                unplannable ->
+                    logger:notice(#{
+                        what => explain_failed,
+                        file => UntypedQuery#untyped_query.input_file_name,
+                        fields => Fields
+                    }),
+                    {ok, sets:new()}
+            end;
         {error, _} = E ->
             E
+    end.
+
+-spec explain_error_kind(map()) -> {non_dml, binary()} | unplannable.
+explain_error_kind(#{code := ~"42601", message := Message}) ->
+    {non_dml, non_dml_keyword(Message)};
+explain_error_kind(#{}) ->
+    unplannable.
+
+-spec non_dml_keyword(binary()) -> binary().
+non_dml_keyword(Message) ->
+    case binary:split(Message, ~"\"", [global]) of
+        [_, Keyword | _] -> Keyword;
+        _ -> ~"statement"
     end.
 
 -doc """
@@ -233,10 +253,15 @@ is_nullable(Name, Index, Field, Nullables, NotNull) ->
 -spec column_name_to_identifier(iodata()) -> {ok, atom()} | {error, term()}.
 column_name_to_identifier(Name0) ->
     Name = iolist_to_binary(Name0),
-    Stripped = strip_nullability_suffix(Name),
-    case characters:is_valid_character_set(Stripped) of
-        true -> {ok, binary_to_atom(Stripped, utf8)};
-        false -> {error, {invalid_column, Name}}
+    case Name of
+        ~"?column?" ->
+            {error, {unaliased_expression_column, Name}};
+        _ ->
+            Stripped = strip_nullability_suffix(Name),
+            case characters:is_valid_character_set(Stripped) of
+                true -> {ok, binary_to_atom(Stripped, utf8)};
+                false -> {error, {invalid_column, Name}}
+            end
     end.
 
 -doc """
@@ -398,6 +423,31 @@ resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
         _ ->
             {error, {unsupported_type, Oid}}
     end.
+
+-spec format_error(term()) -> binary().
+format_error({non_dml_statement, Keyword}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "this statement starts with ~ts, which Postgres's query planner "
+            "rejects with a 42601 syntax error under EXPLAIN even though it is "
+            "valid SQL; marmot only supports statements EXPLAIN can plan. Run "
+            "schema-changing or session statements like this through migrations "
+            "or `psql` instead. Note that `SET` on a pooled connection leaks "
+            "session state to whichever request borrows the connection next.",
+            [Keyword]
+        )
+    );
+format_error({unaliased_expression_column, Name}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "an output column named ~ts arrived from an unaliased expression; "
+            "Postgres does not give marmot a usable field name for it. Add an "
+            "alias in the query, e.g. `select u.id + 1 as total`.",
+            [Name]
+        )
+    );
+format_error(Reason) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Reason])).
 
 -spec collect(list({ok, A} | {error, E})) ->
     {ok, list(A)} | {error, E}.

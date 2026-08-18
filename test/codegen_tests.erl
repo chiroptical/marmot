@@ -107,3 +107,78 @@ doc_less_query_omits_doc_test() ->
     {ok, Forms} = codegen:forms(ping_sql, [ping_query()]),
     Rendered = codegen:render(Forms),
     ?assertEqual(nomatch, binary:match(Rendered, ~"-doc(")).
+
+duplicate_output_columns_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query = #typed_query{
+        input_file_name = "dup.sql",
+        starting_line = 1,
+        root_name = "dup",
+        content = ~"select u.id, o.id from users u, orders o",
+        params = [],
+        returns = [
+            #field{identifier = id, type = int},
+            #field{identifier = id, type = int}
+        ],
+        doc = []
+    },
+    Result = codegen:forms(dup_sql, [Query]),
+    ?assertEqual({error, {duplicate_output_columns, "dup", [id]}}, Result),
+    {error, Reason} = Result,
+    Message = codegen:format_error(Reason),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"id")),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"dup")).
+
+enum_conflict_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query1 = #typed_query{
+        input_file_name = "q1.sql",
+        starting_line = 1,
+        root_name = "q1",
+        content = ~"select $1::status",
+        params = [{enum, {100, ~"status", [~"a"]}}],
+        returns = [],
+        doc = []
+    },
+    Query2 = #typed_query{
+        input_file_name = "q2.sql",
+        starting_line = 1,
+        root_name = "q2",
+        content = ~"select $1::status",
+        params = [{enum, {200, ~"status", [~"b"]}}],
+        returns = [],
+        doc = []
+    },
+    Result = codegen:forms(conflict_sql, [Query1, Query2]),
+    ?assertEqual({error, {enum_conflict, ~"status", [100, 200]}}, Result),
+    {error, Reason} = Result,
+    Message = codegen:format_error(Reason),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"status")),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"100")),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"200")).
+
+name_collision_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query1 = #typed_query{
+        input_file_name = "foo.sql",
+        starting_line = 1,
+        root_name = "foo",
+        content = ~"select 1",
+        params = [],
+        returns = [],
+        doc = []
+    },
+    Query2 = #typed_query{
+        input_file_name = "foo_sql.sql",
+        starting_line = 1,
+        root_name = "foo_sql",
+        content = ~"select 1",
+        params = [],
+        returns = [],
+        doc = []
+    },
+    Result = codegen:forms(collide_sql, [Query1, Query2]),
+    ?assertEqual({error, {name_collision, foo_sql, 0}}, Result),
+    {error, Reason} = Result,
+    Message = codegen:format_error(Reason),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"foo_sql")).
