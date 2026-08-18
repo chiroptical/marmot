@@ -259,8 +259,8 @@ returns_simple(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {ok, [
-            #field{identifier = a, type = int},
-            #field{identifier = b, type = bit_array}
+            #field{identifier = a, type = int, assumed_not_null = true},
+            #field{identifier = b, type = bit_array, assumed_not_null = true}
         ]},
         returns_for(MarmotConfig, ~"select $1::integer as a, $2::text as b")
     ).
