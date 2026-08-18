@@ -40,9 +40,9 @@ name_citext_test() ->
 name_bytea_test() ->
     ?assertEqual({ok, bit_array}, marmot:name_to_type(~"bytea")).
 name_bit_test() ->
-    ?assertEqual({ok, bit_array}, marmot:name_to_type(~"bit")).
+    ?assertEqual({ok, bitstring}, marmot:name_to_type(~"bit")).
 name_varbit_test() ->
-    ?assertEqual({ok, bit_array}, marmot:name_to_type(~"varbit")).
+    ?assertEqual({ok, bitstring}, marmot:name_to_type(~"varbit")).
 name_uuid_test() ->
     ?assertEqual({ok, uuid}, marmot:name_to_type(~"uuid")).
 name_json_test() ->

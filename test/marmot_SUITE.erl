@@ -22,6 +22,7 @@
     enum_array_param/1,
     enum_mixed/1,
     two_distinct_enums/1,
+    same_name_enums_distinct_oids/1,
     enum_tricky_labels/1,
     enum_resolve_deterministic/1,
     unknown_oid/1,
@@ -56,6 +57,7 @@ all() ->
         enum_array_param,
         enum_mixed,
         two_distinct_enums,
+        same_name_enums_distinct_oids,
         enum_tricky_labels,
         enum_resolve_deterministic,
         unknown_oid,
@@ -86,12 +88,23 @@ init_per_suite(Config) ->
         pgo:query("drop type if exists " ++ atom_to_list(N), [], #{pool => Pool})
      || N <- [mood, color, weird]
     ],
+    drop_schemas(Pool),
     #{command := create} =
         pgo:query("create type mood as enum ('happy', 'sad', 'meh')", [], #{pool => Pool}),
     #{command := create} =
         pgo:query("create type color as enum ('red', 'green', 'blue')", [], #{pool => Pool}),
     #{command := create} =
         pgo:query("create type weird as enum ('a-b', 'not allowed', 'UPPER')", [], #{
+            pool => Pool
+        }),
+    #{command := create} =
+        pgo:query("create schema s_a", [], #{pool => Pool}),
+    #{command := create} =
+        pgo:query("create type s_a.status as enum ('draft', 'live')", [], #{pool => Pool}),
+    #{command := create} =
+        pgo:query("create schema s_b", [], #{pool => Pool}),
+    #{command := create} =
+        pgo:query("create type s_b.status as enum ('open', 'closed', 'void')", [], #{
             pool => Pool
         }),
     #{command := create} =
@@ -109,6 +122,7 @@ init_per_suite(Config) ->
 end_per_suite(Config) ->
     #config{pool = Pool} = proplists:get_value(marmot_config, Config),
     drop_tables(Pool),
+    drop_schemas(Pool),
     application:stop(pgo),
     ok.
 
@@ -116,6 +130,13 @@ drop_tables(Pool) ->
     [
         pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
      || N <- [mr_left, mr_right]
+    ],
+    ok.
+
+drop_schemas(Pool) ->
+    [
+        pgo:query("drop schema if exists " ++ atom_to_list(N) ++ " cascade", [], #{pool => Pool})
+     || N <- [s_a, s_b]
     ],
     ok.
 
@@ -155,14 +176,14 @@ multidimensional_array(Config) ->
 enum_param(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood"),
-    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}]} = marmot:resolve_parameters(
+    {ok, [{enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}]} = marmot:resolve_parameters(
         MarmotConfig, ParamOids
     ).
 
 enum_array_param(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood[]"),
-    {ok, [{list, {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}]} = marmot:resolve_parameters(
+    {ok, [{list, {enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}}]} = marmot:resolve_parameters(
         MarmotConfig, ParamOids
     ).
 
@@ -170,7 +191,7 @@ enum_mixed(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} =
         protocol:prepare_statement(MarmotConfig, ~"select $1::mood, $2::integer, $3::text"),
-    {ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}, int, bit_array]} =
+    {ok, [{enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}, int, bit_array]} =
         marmot:resolve_parameters(MarmotConfig, ParamOids).
 
 two_distinct_enums(Config) ->
@@ -178,14 +199,26 @@ two_distinct_enums(Config) ->
     {ok, ParamOids, _Fields} =
         protocol:prepare_statement(MarmotConfig, ~"select $1::mood, $2::color"),
     {ok, [
-        {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}, {enum, ~"color", [~"red", ~"green", ~"blue"]}
+        {enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]},
+        {enum, _, ~"color", [~"red", ~"green", ~"blue"]}
     ]} =
         marmot:resolve_parameters(MarmotConfig, ParamOids).
+
+same_name_enums_distinct_oids(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    {ok, ParamOids, _Fields} =
+        protocol:prepare_statement(MarmotConfig, ~"select $1::s_a.status, $2::s_b.status"),
+    {ok, [
+        {enum, OidA, ~"status", [~"draft", ~"live"]},
+        {enum, OidB, ~"status", [~"open", ~"closed", ~"void"]}
+    ]} =
+        marmot:resolve_parameters(MarmotConfig, ParamOids),
+    ?assertNotEqual(OidA, OidB).
 
 enum_tricky_labels(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::weird"),
-    {ok, [{enum, ~"weird", [~"a-b", ~"not allowed", ~"UPPER"]}]} =
+    {ok, [{enum, _, ~"weird", [~"a-b", ~"not allowed", ~"UPPER"]}]} =
         marmot:resolve_parameters(MarmotConfig, ParamOids).
 
 enum_resolve_deterministic(Config) ->
@@ -193,7 +226,7 @@ enum_resolve_deterministic(Config) ->
     {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood"),
     First = marmot:resolve_parameters(MarmotConfig, ParamOids),
     Second = marmot:resolve_parameters(MarmotConfig, ParamOids),
-    ?assertEqual({ok, [{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}]}, First),
+    ?assertMatch({ok, [{enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}]}, First),
     ?assertEqual(First, Second).
 
 unknown_oid(Config) ->
@@ -270,17 +303,17 @@ returns_suffix_overrides(Config) ->
 
 returns_enum(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    ?assertEqual(
-        {ok, [#field{identifier = m, type = {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}]},
+    ?assertMatch(
+        {ok, [#field{identifier = m, type = {enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}}]},
         returns_for(MarmotConfig, ~"select $1::mood as m")
     ).
 
 returns_array(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    ?assertEqual(
+    ?assertMatch(
         {ok, [
             #field{identifier = xs, type = {list, int}},
-            #field{identifier = ms, type = {list, {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}}
+            #field{identifier = ms, type = {list, {enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}}}
         ]},
         returns_for(MarmotConfig, ~"select $1::integer[] as xs, $2::mood[] as ms")
     ).
@@ -358,9 +391,9 @@ infer_types_left_join(Config) ->
 infer_types_enum(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     {ok, TypedQuery} = infer_types_for(MarmotConfig, ~"select $1::mood as m"),
-    ?assertEqual([{enum, ~"mood", [~"happy", ~"sad", ~"meh"]}], TypedQuery#typed_query.params),
-    ?assertEqual(
-        [#field{identifier = m, type = {enum, ~"mood", [~"happy", ~"sad", ~"meh"]}}],
+    ?assertMatch([{enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}], TypedQuery#typed_query.params),
+    ?assertMatch(
+        [#field{identifier = m, type = {enum, _, ~"mood", [~"happy", ~"sad", ~"meh"]}}],
         TypedQuery#typed_query.returns
     ).
 
