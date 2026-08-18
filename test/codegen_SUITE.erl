@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--import_record(marmot, [untyped_query]).
+-import_record(marmot, [untyped_query, typed_query, field]).
 -import_record(marmot_config, [config]).
 
 -export([
@@ -20,7 +20,8 @@
     tricky_label_enum_decodes_atom/1,
     enum_round_trip/1,
     array_column_decodes_list/1,
-    wrongly_guessed_not_null_column_errors/1
+    wrongly_guessed_not_null_column_errors/1,
+    utf8_sql_round_trips_exact_bytes/1
 ]).
 
 all() ->
@@ -31,7 +32,8 @@ all() ->
         tricky_label_enum_decodes_atom,
         enum_round_trip,
         array_column_decodes_list,
-        wrongly_guessed_not_null_column_errors
+        wrongly_guessed_not_null_column_errors,
+        utf8_sql_round_trips_exact_bytes
     ].
 
 init_per_suite(Config) ->
@@ -195,3 +197,20 @@ wrongly_guessed_not_null_column_errors(Config) ->
         MarmotConfig, cg_agg_sql, "cg_agg", ~"select max(id) as m from cg_empty"
     ),
     ?assertEqual({error, {unexpected_null, m}}, Mod:cg_agg()).
+
+utf8_sql_round_trips_exact_bytes(_Config) ->
+    Content = <<"-- caf", 195, 169, " ok\nselect 1 as one">>,
+    Query = #typed_query{
+        input_file_name = "cg_utf8.sql",
+        starting_line = 1,
+        root_name = "cg_utf8",
+        content = Content,
+        params = [],
+        returns = [#field{identifier = one, type = int}],
+        doc = []
+    },
+    Module = cg_utf8_sql,
+    {ok, Forms} = codegen:forms(Module, [Query]),
+    {ok, _, Binary} = compile:forms(Forms, [return_errors]),
+    {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
+    ?assertEqual(Content, Module:cg_utf8_sql()).
