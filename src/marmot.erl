@@ -21,7 +21,7 @@ TODO
     type_info_to_type/2
 ]).
 
--export_type([type/0]).
+-export_type([type/0, enum/0]).
 
 -record(#untyped_query{
     input_file_name = "" :: string(),
@@ -46,8 +46,10 @@ TODO
     | bool
     | json
     | uuid
-    | {enum, Oid :: pos_integer(), Name :: binary(), Variants :: [binary()]}
+    | {enum, enum()}
     | {list, type()}.
+
+-type enum() :: {Oid :: pos_integer(), Name :: binary(), Variants :: [binary()]}.
 
 -record #field{
     identifier :: atom(),
@@ -392,7 +394,7 @@ resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
         )
     of
         #{command := select, rows := Rows} ->
-            {ok, {enum, Oid, Name, [L || #{~"enumlabel" := L} <- Rows]}};
+            {ok, {enum, {Oid, Name, [L || #{~"enumlabel" := L} <- Rows]}}};
         _ ->
             {error, {unsupported_type, Oid}}
     end.
