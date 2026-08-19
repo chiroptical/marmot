@@ -84,7 +84,7 @@ from_file(FileName) ->
         {ok, Content} ?= file:read_file(FileName),
         BaseName = filename:basename(FileName),
         RootName = filename:rootname(BaseName),
-        true ?= characters:is_valid_character_set(RootName),
+        ok ?= valid_root_name(RootName),
         {ok, #untyped_query{
             input_file_name = FileName,
             starting_line = 1,
@@ -94,6 +94,13 @@ from_file(FileName) ->
         }}
     else
         {error, Reason} -> {error, Reason}
+    end.
+
+-spec valid_root_name(file:filename_all()) -> ok | {error, term()}.
+valid_root_name(RootName) ->
+    case characters:is_valid_character_set(RootName) of
+        true -> ok;
+        false -> {error, {invalid_query_file_name, RootName}}
     end.
 
 -spec leading_comment(binary()) -> [binary()].
@@ -442,6 +449,15 @@ format_error({non_dml_statement, Keyword}) ->
             "or `psql` instead. Note that `SET` on a pooled connection leaks "
             "session state to whichever request borrows the connection next.",
             [Keyword]
+        )
+    );
+format_error({invalid_query_file_name, RootName}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "the query file ~ts.sql cannot become an Erlang function name; a query "
+            "file's name must start with a lowercase letter and contain only "
+            "lowercase letters, digits and underscores. Rename it.",
+            [RootName]
         )
     );
 format_error({unaliased_expression_column, Name}) ->
