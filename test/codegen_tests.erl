@@ -19,6 +19,21 @@ get_user_query() ->
         doc = [~"Get a user."]
     }.
 
+list_users_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "list_users.sql",
+        starting_line = 1,
+        root_name = "list_users",
+        content = ~"select id, name from users",
+        params = [],
+        returns = [
+            #field{identifier = id, type = int},
+            #field{identifier = name, type = {option, bit_array}}
+        ],
+        doc = []
+    }.
+
 ping_query() ->
     {module, marmot} = code:ensure_loaded(marmot),
     #typed_query{
@@ -94,6 +109,10 @@ compile_option_column_test() ->
 
 compile_zero_column_test() ->
     {ok, Forms} = codegen:forms(ping_sql, [ping_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+compile_two_queries_test() ->
+    {ok, Forms} = codegen:forms(users_sql, [get_user_query(), list_users_query()]),
     ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
 
 module_starts_with_banner_test() ->
