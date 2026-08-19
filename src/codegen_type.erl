@@ -1,6 +1,6 @@
 -module(codegen_type).
 
--export([to_ast/1, enums/1]).
+-export([to_ast/1, enums/1, anno/0]).
 
 -spec to_ast(marmot:type()) -> erl_parse:abstract_type().
 to_ast(int) ->
@@ -51,7 +51,7 @@ to_ast({enum, {_Oid, Name, _Variants}}) ->
 
 -spec anno() -> erl_anno:anno().
 anno() ->
-    erl_anno:new(0).
+    erl_anno:new(1).
 
 -spec enums([marmot:type()]) -> [marmot:enum()].
 enums(Types) ->
