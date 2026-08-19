@@ -20,12 +20,21 @@ module(Module, Queries) ->
 forms(Module, Queries) ->
     maybe
         ok ?= validate(Queries),
-        Header = [
-            {attribute, codegen_type:anno(), module, Module},
-            {attribute, codegen_type:anno(), export, export_list(Queries)}
-        ],
+        Enums = codegen_type:enums(lists:flatmap(fun query_types/1, Queries)),
+        ReturnEnums = return_enums(Queries),
+        ParamEnums = param_enums(Queries),
+        Header =
+            [
+                {attribute, codegen_type:anno(), module, Module},
+                {attribute, codegen_type:anno(), export, export_list(Queries)}
+            ] ++ export_type_forms(Enums) ++ enum_type_forms(Enums),
         Body = lists:flatmap(fun query_forms/1, Queries),
-        {ok, erl_syntax:revert_forms(erl_syntax:form_list(Header ++ Body))}
+        Guards = guard_forms(Queries),
+        EnumCodecs = enum_codec_forms(ReturnEnums, ParamEnums),
+        {ok,
+            erl_syntax:revert_forms(
+                erl_syntax:form_list(Header ++ Body ++ Guards ++ EnumCodecs)
+            )}
     end.
 
 -spec render([erl_parse:abstract_form()]) -> binary().
@@ -108,6 +117,21 @@ check_enum_conflicts(Queries) ->
 query_types(#typed_query{params = Params, returns = Returns}) ->
     Params ++ [Field#field.type || Field <- Returns].
 
+-spec return_enums([#typed_query{}]) -> [marmot:enum()].
+return_enums(Queries) ->
+    codegen_type:enums(
+        lists:flatmap(
+            fun(#typed_query{returns = Returns}) -> [Field#field.type || Field <- Returns] end,
+            Queries
+        )
+    ).
+
+-spec param_enums([#typed_query{}]) -> [marmot:enum()].
+param_enums(Queries) ->
+    codegen_type:enums(
+        lists:flatmap(fun(#typed_query{params = Params}) -> Params end, Queries)
+    ).
+
 -spec enum_name_conflicts([marmot:enum()]) -> [{binary(), [pos_integer()]}].
 enum_name_conflicts(Enums) ->
     ByName = lists:foldl(
@@ -132,8 +156,11 @@ check_name_collisions(Queries) ->
 -spec emitted_names([#typed_query{}]) -> [{atom(), non_neg_integer()}].
 emitted_names(Queries) ->
     QueryNames = lists:flatmap(fun query_emitted_names/1, Queries),
-    Enums = codegen_type:enums(lists:flatmap(fun query_types/1, Queries)),
-    EnumNames = lists:flatmap(fun enum_emitted_names/1, Enums),
+    ReturnEnums = return_enums(Queries),
+    ParamEnums = param_enums(Queries),
+    EnumNames =
+        [{enum_decode_fn(Name), 1} || {_Oid, Name, _Variants} <- ReturnEnums] ++
+            [{enum_encode_fn(Name), 1} || {_Oid, Name, _Variants} <- ParamEnums],
     QueryNames ++ EnumNames ++ [{assume_not_null, 2}, {array_elem, 2}].
 
 -spec query_emitted_names(#typed_query{}) -> [{atom(), non_neg_integer()}].
@@ -143,11 +170,6 @@ query_emitted_names(Query = #typed_query{params = Params, returns = Returns}) ->
         [] -> Base;
         _ -> [{decode_name(Query), 1} | Base]
     end.
-
--spec enum_emitted_names(marmot:enum()) -> [{atom(), non_neg_integer()}].
-enum_emitted_names({_Oid, Name, _Variants}) ->
-    Atom = binary_to_atom(Name, utf8),
-    [{suffixed_atom(Atom, "_from_pg"), 1}, {suffixed_atom(Atom, "_to_pg"), 1}].
 
 -spec duplicate_names([{atom(), non_neg_integer()}]) -> [{atom(), non_neg_integer()}].
 duplicate_names(Names) ->
@@ -161,6 +183,186 @@ duplicate_names(Names) ->
 -spec export_list([#typed_query{}]) -> [{atom(), non_neg_integer()}].
 export_list(Queries) ->
     lists:flatmap(fun query_exports/1, Queries).
+
+-spec export_type_forms([marmot:enum()]) -> [erl_parse:abstract_form()].
+export_type_forms([]) ->
+    [];
+export_type_forms(Enums) ->
+    [
+        {attribute, codegen_type:anno(), export_type, [
+            {codegen_type:enum_type_name(Name), 0}
+         || {_Oid, Name, _Variants} <- Enums
+        ]}
+    ].
+
+-spec enum_type_forms([marmot:enum()]) -> [erl_parse:abstract_form()].
+enum_type_forms(Enums) ->
+    [enum_type_form(Enum) || Enum <- Enums].
+
+-spec enum_type_form(marmot:enum()) -> erl_parse:abstract_form().
+enum_type_form({_Oid, Name, Variants}) ->
+    TypeName = codegen_type:enum_type_name(Name),
+    {attribute, codegen_type:anno(), type, {TypeName, enum_union_type(Variants), []}}.
+
+-spec enum_union_type([binary()]) -> erl_parse:abstract_type().
+enum_union_type([Variant]) ->
+    {atom, codegen_type:anno(), binary_to_atom(Variant, utf8)};
+enum_union_type(Variants) ->
+    {type, codegen_type:anno(), union, [
+        {atom, codegen_type:anno(), binary_to_atom(V, utf8)}
+     || V <- Variants
+    ]}.
+
+-spec enum_codec_forms([marmot:enum()], [marmot:enum()]) -> [erl_parse:abstract_form()].
+enum_codec_forms(ReturnEnums, ParamEnums) ->
+    [enum_decode_form(Enum) || Enum <- ReturnEnums] ++
+        [enum_encode_form(Enum) || Enum <- ParamEnums].
+
+-spec enum_decode_form(marmot:enum()) -> erl_parse:abstract_form().
+enum_decode_form({_Oid, Name, Variants}) ->
+    TypeName = codegen_type:enum_type_name(Name),
+    FnName = enum_decode_fn(Name),
+    Clauses =
+        [
+            {clause, codegen_type:anno(), [enum_label_bin(V)], [], [
+                {atom, codegen_type:anno(), binary_to_atom(V, utf8)}
+            ]}
+         || V <- Variants
+        ] ++ [unknown_enum_label_clause(TypeName)],
+    {function, codegen_type:anno(), FnName, 1, Clauses}.
+
+-spec unknown_enum_label_clause(atom()) -> erl_parse:abstract_clause().
+unknown_enum_label_clause(TypeName) ->
+    V = {var, codegen_type:anno(), 'V'},
+    {clause, codegen_type:anno(), [V], [], [
+        {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+            {tuple, codegen_type:anno(), [
+                {atom, codegen_type:anno(), marmot_decode_error},
+                {tuple, codegen_type:anno(), [
+                    {atom, codegen_type:anno(), unknown_enum_label},
+                    {atom, codegen_type:anno(), TypeName},
+                    V
+                ]}
+            ]}
+        ]}
+    ]}.
+
+-spec enum_encode_form(marmot:enum()) -> erl_parse:abstract_form().
+enum_encode_form({_Oid, Name, Variants}) ->
+    FnName = enum_encode_fn(Name),
+    Clauses =
+        [
+            {clause, codegen_type:anno(), [{atom, codegen_type:anno(), binary_to_atom(V, utf8)}],
+                [], [enum_label_bin(V)]}
+         || V <- Variants
+        ],
+    {function, codegen_type:anno(), FnName, 1, Clauses}.
+
+-spec enum_label_bin(binary()) -> erl_parse:abstract_expr().
+enum_label_bin(Label) ->
+    {bin, codegen_type:anno(), [
+        {bin_element, codegen_type:anno(), {string, codegen_type:anno(), binary_to_list(Label)},
+            default, default}
+    ]}.
+
+-spec enum_decode_fn(binary()) -> atom().
+enum_decode_fn(Name) ->
+    prefixed_atom("to_", codegen_type:enum_type_name(Name)).
+
+-spec enum_encode_fn(binary()) -> atom().
+enum_encode_fn(Name) ->
+    prefixed_atom("from_", codegen_type:enum_type_name(Name)).
+
+-spec guard_forms([#typed_query{}]) -> [erl_syntax:syntaxTree()].
+guard_forms(Queries) ->
+    AssumeNotNull =
+        case any_assumed_not_null(Queries) of
+            true -> [assume_not_null_form()];
+            false -> []
+        end,
+    ArrayElem =
+        case any_list_column(Queries) of
+            true -> [array_elem_form()];
+            false -> []
+        end,
+    AssumeNotNull ++ ArrayElem.
+
+-spec any_assumed_not_null([#typed_query{}]) -> boolean().
+any_assumed_not_null(Queries) ->
+    lists:any(
+        fun(#typed_query{returns = Returns}) ->
+            lists:any(fun(#field{assumed_not_null = Assumed}) -> Assumed end, Returns)
+        end,
+        Queries
+    ).
+
+-spec any_list_column([#typed_query{}]) -> boolean().
+any_list_column(Queries) ->
+    lists:any(
+        fun(#typed_query{returns = Returns}) ->
+            lists:any(fun(#field{type = Type}) -> type_has_list(Type) end, Returns)
+        end,
+        Queries
+    ).
+
+-spec type_has_list(marmot:type()) -> boolean().
+type_has_list({list, _}) -> true;
+type_has_list({option, T}) -> type_has_list(T);
+type_has_list(_) -> false.
+
+-spec assume_not_null_form() -> erl_parse:abstract_form().
+assume_not_null_form() ->
+    Col = {var, codegen_type:anno(), 'Col'},
+    Clause1 =
+        {clause, codegen_type:anno(), [Col, {atom, codegen_type:anno(), null}], [], [
+            {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+                {tuple, codegen_type:anno(), [
+                    {atom, codegen_type:anno(), marmot_decode_error},
+                    {tuple, codegen_type:anno(), [
+                        {atom, codegen_type:anno(), unexpected_null}, Col
+                    ]}
+                ]}
+            ]}
+        ]},
+    V = {var, codegen_type:anno(), 'V'},
+    Clause2 = {clause, codegen_type:anno(), [{var, codegen_type:anno(), '_Col'}, V], [], [V]},
+    {function, codegen_type:anno(), assume_not_null, 2, [Clause1, Clause2]}.
+
+-spec array_elem_form() -> erl_parse:abstract_form().
+array_elem_form() ->
+    Col = {var, codegen_type:anno(), 'Col'},
+    Clause1 =
+        {clause, codegen_type:anno(), [Col, {atom, codegen_type:anno(), null}], [], [
+            {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+                {tuple, codegen_type:anno(), [
+                    {atom, codegen_type:anno(), marmot_decode_error},
+                    {tuple, codegen_type:anno(), [
+                        {atom, codegen_type:anno(), unexpected_null_element}, Col
+                    ]}
+                ]}
+            ]}
+        ]},
+    Clause2 =
+        {clause, codegen_type:anno(),
+            [
+                Col,
+                {tuple, codegen_type:anno(), [
+                    {atom, codegen_type:anno(), array}, {var, codegen_type:anno(), '_'}
+                ]}
+            ],
+            [], [
+                {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+                    {tuple, codegen_type:anno(), [
+                        {atom, codegen_type:anno(), marmot_decode_error},
+                        {tuple, codegen_type:anno(), [
+                            {atom, codegen_type:anno(), unsupported_multidimensional_array}, Col
+                        ]}
+                    ]}
+                ]}
+            ]},
+    V = {var, codegen_type:anno(), 'V'},
+    Clause3 = {clause, codegen_type:anno(), [{var, codegen_type:anno(), '_Col'}, V], [], [V]},
+    {function, codegen_type:anno(), array_elem, 2, [Clause1, Clause2, Clause3]}.
 
 -spec query_exports(#typed_query{}) -> [{atom(), non_neg_integer()}].
 query_exports(Query = #typed_query{params = Params}) ->
@@ -281,17 +483,21 @@ return_type(Query = #typed_query{}) ->
 
 -spec function_form(#typed_query{}) -> erl_syntax:syntaxTree().
 function_form(Query = #typed_query{params = Params, returns = []}) ->
+    ArgVars = arg_vars(length(Params)),
     merl:qquote(?MERL_POS, zero_column_query_text(), [
         {'Name', term(query_name(Query))},
-        {'Args', arg_vars(length(Params))},
-        {'SqlName', term(sql_name(Query))}
+        {'Args', ArgVars},
+        {'SqlName', term(sql_name(Query))},
+        {'EncodedArgs', encoded_args(Params, ArgVars)}
     ]);
 function_form(Query = #typed_query{params = Params}) ->
+    ArgVars = arg_vars(length(Params)),
     merl:qquote(?MERL_POS, query_text(), [
         {'Name', term(query_name(Query))},
-        {'Args', arg_vars(length(Params))},
+        {'Args', ArgVars},
         {'SqlName', term(sql_name(Query))},
-        {'DecodeName', term(decode_name(Query))}
+        {'DecodeName', term(decode_name(Query))},
+        {'EncodedArgs', encoded_args(Params, ArgVars)}
     ]).
 
 -spec zero_column_query_text() -> string().
@@ -301,7 +507,7 @@ zero_column_query_text() ->
     "                 [{return_rows_as_maps, false},\n"
     "                  {column_name_as_atom, false},\n"
     "                  {decode_fun, undefined}]},\n"
-    "    case pgo:query('@SqlName'(), [_@@Args], Opts) of\n"
+    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], Opts) of\n"
     "        #{num_rows := N} -> {ok, N};\n"
     "        {error, _} = E -> E\n"
     "    end.".
@@ -313,7 +519,7 @@ query_text() ->
     "                 [{return_rows_as_maps, false},\n"
     "                  {column_name_as_atom, false},\n"
     "                  {decode_fun, undefined}]},\n"
-    "    case pgo:query('@SqlName'(), [_@@Args], Opts) of\n"
+    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], Opts) of\n"
     "        #{num_rows := N, rows := Rows} ->\n"
     "            try {ok, N, ['@DecodeName'(R) || R <- Rows]} catch\n"
     "                throw:{marmot_decode_error, Reason} -> {error, Reason}\n"
@@ -341,6 +547,20 @@ arg_vars(N) ->
 arg_var_name(I) ->
     list_to_atom("Arg" ++ integer_to_list(I)).
 
+-spec encoded_args([marmot:type()], [erl_syntax:syntaxTree()]) -> [erl_syntax:syntaxTree()].
+encoded_args(Params, ArgVars) ->
+    [encode_param(Param, Var) || {Param, Var} <- lists:zip(Params, ArgVars)].
+
+-spec encode_param(marmot:type(), erl_syntax:syntaxTree()) -> erl_syntax:syntaxTree().
+encode_param({enum, {_Oid, Name, _Variants}}, Var) ->
+    Fn = enum_encode_fn(Name),
+    merl:qquote(?MERL_POS, "'@Fn'(_@Var)", [{'Fn', term(Fn)}, {'Var', Var}]);
+encode_param({list, {enum, {_Oid, Name, _Variants}}}, Var) ->
+    Fn = enum_encode_fn(Name),
+    merl:qquote(?MERL_POS, "['@Fn'(X) || X <- _@Var]", [{'Fn', term(Fn)}, {'Var', Var}]);
+encode_param(_Type, Var) ->
+    Var.
+
 -spec decode_forms(#typed_query{}) -> [erl_syntax:syntaxTree()].
 decode_forms(#typed_query{returns = []}) ->
     [];
@@ -363,10 +583,44 @@ col_var_name(I) ->
     list_to_atom("C" ++ integer_to_list(I)).
 
 -spec field_form(#field{}, erl_syntax:syntaxTree()) -> erl_syntax:syntaxTree().
-field_form(#field{identifier = Identifier, type = {option, _}}, Col) ->
-    Value = merl:qquote(?MERL_POS, "case _@Col of null -> none; V -> {some, V} end", [
-        {'Col', Col}
-    ]),
-    erl_syntax:record_field(erl_syntax:atom(Identifier), Value);
-field_form(#field{identifier = Identifier}, Col) ->
-    erl_syntax:record_field(erl_syntax:atom(Identifier), Col).
+field_form(#field{identifier = Identifier, type = Type, assumed_not_null = Assumed}, Col) ->
+    Value = column_value(Type, Assumed, Col, Identifier),
+    erl_syntax:record_field(erl_syntax:atom(Identifier), Value).
+
+-spec column_value(marmot:type(), boolean(), erl_syntax:syntaxTree(), atom()) ->
+    erl_syntax:syntaxTree().
+column_value({option, T}, _Assumed, Col, ColName) ->
+    Inner = non_null_value(T, var('V'), ColName),
+    merl:qquote(?MERL_POS, "case _@Col of null -> none; V -> {some, _@Inner} end", [
+        {'Col', Col}, {'Inner', Inner}
+    ]);
+column_value(Type, true, Col, ColName) ->
+    non_null_value(Type, guarded_col(Col, ColName), ColName);
+column_value(Type, false, Col, ColName) ->
+    non_null_value(Type, Col, ColName).
+
+-spec guarded_col(erl_syntax:syntaxTree(), atom()) -> erl_syntax:syntaxTree().
+guarded_col(Col, ColName) ->
+    merl:qquote(?MERL_POS, "assume_not_null(_@ColName, _@Col)", [
+        {'ColName', term(ColName)}, {'Col', Col}
+    ]).
+
+-spec non_null_value(marmot:type(), erl_syntax:syntaxTree(), atom()) -> erl_syntax:syntaxTree().
+non_null_value({enum, {_Oid, Name, _Variants}}, ValueTree, _ColName) ->
+    Fn = enum_decode_fn(Name),
+    merl:qquote(?MERL_POS, "'@Fn'(_@V)", [{'Fn', term(Fn)}, {'V', ValueTree}]);
+non_null_value({list, ElemType}, ValueTree, ColName) ->
+    list_value(ElemType, ValueTree, ColName);
+non_null_value(_Plain, ValueTree, _ColName) ->
+    ValueTree.
+
+-spec list_value(marmot:type(), erl_syntax:syntaxTree(), atom()) -> erl_syntax:syntaxTree().
+list_value({enum, {_Oid, Name, _Variants}}, ValueTree, ColName) ->
+    Fn = enum_decode_fn(Name),
+    merl:qquote(?MERL_POS, "['@Fn'(array_elem(_@ColName, X)) || X <- _@V]", [
+        {'Fn', term(Fn)}, {'ColName', term(ColName)}, {'V', ValueTree}
+    ]);
+list_value(_ElemType, ValueTree, ColName) ->
+    merl:qquote(?MERL_POS, "[array_elem(_@ColName, X) || X <- _@V]", [
+        {'ColName', term(ColName)}, {'V', ValueTree}
+    ]).

@@ -55,7 +55,8 @@ TODO
 
 -record #field{
     identifier :: atom(),
-    type :: type()
+    type :: type(),
+    assumed_not_null = false :: boolean()
 }.
 -export_record([field]).
 
@@ -201,6 +202,7 @@ resolve_returns(Config, Fields, Nullables) ->
         {error, _} = E -> E
     end.
 
+-dialyzer({nowarn_function, resolve_return/5}).
 -spec resolve_return(
     #config{}, #row_description_field{}, non_neg_integer(), sets:set(non_neg_integer()), map()
 ) ->
@@ -210,12 +212,17 @@ resolve_return(Config, Field, Index, Nullables, NotNull) ->
     maybe
         {ok, Identifier} ?= column_name_to_identifier(Name),
         {ok, Type} ?= resolve_oid(Config, Field#row_description_field.data_type_oid),
+        Nullable = is_nullable(Name, Index, Field, Nullables, NotNull),
         Wrapped =
-            case is_nullable(Name, Index, Field, Nullables, NotNull) of
+            case Nullable of
                 true -> {option, Type};
                 false -> Type
             end,
-        {ok, #field{identifier = Identifier, type = Wrapped}}
+        AssumedNotNull =
+            not Nullable andalso
+                Field#row_description_field.table_oid =:= 0 andalso
+                nullability_override(Name) =:= none,
+        {ok, #field{identifier = Identifier, type = Wrapped, assumed_not_null = AssumedNotNull}}
     else
         {error, _} = E -> E
     end.

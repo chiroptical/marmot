@@ -182,3 +182,168 @@ name_collision_test() ->
     {error, Reason} = Result,
     Message = codegen:format_error(Reason),
     ?assertNotEqual(nomatch, binary:match(Message, ~"foo_sql")).
+
+mood_enum() ->
+    {enum, {100, ~"mood", [~"happy", ~"sad", ~"meh"]}}.
+
+weird_enum() ->
+    {enum, {200, ~"weird", [~"a-b", ~"not allowed", ~"UPPER"]}}.
+
+enum_column_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "get_mood.sql",
+        starting_line = 1,
+        root_name = "get_mood",
+        content = ~"select $1::mood as m",
+        params = [mood_enum()],
+        returns = [#field{identifier = m, type = mood_enum()}],
+        doc = []
+    }.
+
+nullable_enum_column_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "maybe_mood.sql",
+        starting_line = 1,
+        root_name = "maybe_mood",
+        content = ~"select m from moods where id = $1",
+        params = [int],
+        returns = [#field{identifier = m, type = {option, mood_enum()}}],
+        doc = []
+    }.
+
+array_column_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "get_xs.sql",
+        starting_line = 1,
+        root_name = "get_xs",
+        content = ~"select $1::integer[] as xs",
+        params = [{list, int}],
+        returns = [#field{identifier = xs, type = {list, int}}],
+        doc = []
+    }.
+
+assumed_not_null_column_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "get_n.sql",
+        starting_line = 1,
+        root_name = "get_n",
+        content = ~"select count(*) as n from users",
+        params = [],
+        returns = [#field{identifier = n, type = int, assumed_not_null = true}],
+        doc = []
+    }.
+
+tricky_labels_query() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    #typed_query{
+        input_file_name = "get_weird.sql",
+        starting_line = 1,
+        root_name = "get_weird",
+        content = ~"select $1::weird as w",
+        params = [weird_enum()],
+        returns = [#field{identifier = w, type = weird_enum()}],
+        doc = []
+    }.
+
+compile_enum_column_test() ->
+    {ok, Forms} = codegen:forms(mood_sql, [enum_column_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+compile_nullable_enum_column_test() ->
+    {ok, Forms} = codegen:forms(mood_sql, [nullable_enum_column_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+compile_array_column_test() ->
+    {ok, Forms} = codegen:forms(xs_sql, [array_column_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+compile_assumed_not_null_column_test() ->
+    {ok, Forms} = codegen:forms(n_sql, [assumed_not_null_column_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+compile_tricky_labels_test() ->
+    {ok, Forms} = codegen:forms(weird_sql, [tricky_labels_query()]),
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).
+
+enum_column_renders_codec_calls_test() ->
+    {ok, Forms} = codegen:forms(mood_sql, [enum_column_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"to_mood(C1)")),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"from_mood(Arg1)")),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"-type mood() ::")).
+
+enum_codecs_are_not_exported_test() ->
+    {ok, Forms} = codegen:forms(mood_sql, [enum_column_query()]),
+    Rendered = codegen:render(Forms),
+    {Start, _} = binary:match(Rendered, ~"-export(["),
+    {End, _} = binary:match(Rendered, ~"]).", [{scope, {Start, byte_size(Rendered) - Start}}]),
+    ExportBlock = binary:part(Rendered, Start, End - Start),
+    ?assertEqual(nomatch, binary:match(ExportBlock, ~"to_mood")),
+    ?assertEqual(nomatch, binary:match(ExportBlock, ~"from_mood")),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"-export_type([mood/0])")).
+
+enum_used_only_in_returns_emits_only_decode_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query = #typed_query{
+        input_file_name = "get_mood2.sql",
+        starting_line = 1,
+        root_name = "get_mood2",
+        content = ~"select m from moods where id = 1",
+        params = [],
+        returns = [#field{identifier = m, type = mood_enum()}],
+        doc = []
+    },
+    {ok, Forms} = codegen:forms(mood_sql, [Query]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"to_mood(")),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"from_mood(")).
+
+enum_used_only_in_params_emits_only_encode_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query = #typed_query{
+        input_file_name = "set_mood.sql",
+        starting_line = 1,
+        root_name = "set_mood",
+        content = ~"select 1 where $1::mood is not null",
+        params = [mood_enum()],
+        returns = [],
+        doc = []
+    },
+    {ok, Forms} = codegen:forms(mood_sql, [Query]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"from_mood(")),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"to_mood(")).
+
+nullable_enum_renders_case_test() ->
+    {ok, Forms} = codegen:forms(mood_sql, [nullable_enum_column_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"{some, to_mood(V)}")).
+
+array_column_renders_array_elem_test() ->
+    {ok, Forms} = codegen:forms(xs_sql, [array_column_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"array_elem(xs, X)")),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"assume_not_null(")).
+
+assumed_not_null_renders_guard_test() ->
+    {ok, Forms} = codegen:forms(n_sql, [assumed_not_null_column_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"assume_not_null(n, C1)")),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"array_elem(")).
+
+no_column_needs_guards_omits_both_test() ->
+    {ok, Forms} = codegen:forms(get_user_sql, [get_user_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"assume_not_null(")),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"array_elem(")).
+
+tricky_labels_render_quoted_test() ->
+    {ok, Forms} = codegen:forms(weird_sql, [tricky_labels_query()]),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"'a-b'")),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"'not allowed'")),
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"'UPPER'")).

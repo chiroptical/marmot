@@ -73,7 +73,7 @@ concurrent_inference(Config) ->
     ResultsB = receive_result(b, PidB),
     Expected =
         {ok, [
-            #field{identifier = id, type = int},
+            #field{identifier = id, type = int, assumed_not_null = true},
             #field{identifier = name, type = {option, bit_array}}
         ]},
     [?assertEqual(Expected, R) || R <- ResultsA],
