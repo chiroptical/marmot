@@ -7,13 +7,17 @@ pool configuration marmot should start itself. When `connection` is `none`,
 the caller has already started `Pool` and marmot only uses it.
 """.
 
--export([from_env/0]).
+-export([new/2, from_env/0]).
 
 -record(#config{
     pool = marmot :: pgo:pool(),
     connection = none :: none | {some, pgo:pool_config()}
 }).
 -export_record([config]).
+
+-spec new(pgo:pool(), none | {some, pgo:pool_config()}) -> #config{}.
+new(Pool, Connection) ->
+    #config{pool = Pool, connection = Connection}.
 
 -doc """
 Build a `#config{}` from `PGO_*` environment variables, matching the defaults
