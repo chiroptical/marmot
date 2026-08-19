@@ -18,12 +18,15 @@ module(Module, Queries) ->
 -spec forms(module(), [#typed_query{}]) ->
     {ok, [erl_parse:abstract_form()]} | {error, term()}.
 forms(Module, Queries) ->
-    Header = [
-        {attribute, codegen_type:anno(), module, Module},
-        {attribute, codegen_type:anno(), export, export_list(Queries)}
-    ],
-    Body = lists:flatmap(fun query_forms/1, Queries),
-    {ok, erl_syntax:revert_forms(erl_syntax:form_list(Header ++ Body))}.
+    maybe
+        ok ?= validate(Queries),
+        Header = [
+            {attribute, codegen_type:anno(), module, Module},
+            {attribute, codegen_type:anno(), export, export_list(Queries)}
+        ],
+        Body = lists:flatmap(fun query_forms/1, Queries),
+        {ok, erl_syntax:revert_forms(erl_syntax:form_list(Header ++ Body))}
+    end.
 
 -spec render([erl_parse:abstract_form()]) -> binary().
 render(Forms) ->
@@ -31,8 +34,129 @@ render(Forms) ->
     unicode:characters_to_binary(Formatted).
 
 -spec format_error(term()) -> binary().
+format_error({duplicate_output_columns, RootName, Identifiers}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "query ~ts has duplicate output column name(s): ~ts. The emitter cannot "
+            "generate a record with repeated fields, and the table alias is not "
+            "transmitted by Postgres, so marmot cannot rename them for you. Alias one "
+            "of the columns in the query, e.g. `select u.id as user_id`.",
+            [RootName, lists:join(", ", [atom_to_list(Id) || Id <- Identifiers])]
+        )
+    );
+format_error({enum_conflict, Name, Oids}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "enum ~ts resolves to more than one Postgres type (OIDs ~ts) among the "
+            "queries in this module. Two schemas can define same-named enums with "
+            "identical variants, and marmot will not silently merge them. Split the "
+            "conflicting queries into separate directories so each becomes its own "
+            "module; a single query that joins two schemas' same-named enums cannot "
+            "currently be split.",
+            [Name, lists:join(", ", [integer_to_list(Oid) || Oid <- Oids])]
+        )
+    );
+format_error({name_collision, Name, Arity}) ->
+    unicode:characters_to_binary(
+        io_lib:format(
+            "generated function ~ts/~p would be defined more than once in this "
+            "module. Rename the query file or output column that produces it.",
+            [Name, Arity]
+        )
+    );
 format_error(Reason) ->
     unicode:characters_to_binary(io_lib:format("~p", [Reason])).
+
+-spec validate([#typed_query{}]) -> ok | {error, term()}.
+validate(Queries) ->
+    maybe
+        ok ?= check_duplicate_output_columns(Queries),
+        ok ?= check_enum_conflicts(Queries),
+        ok ?= check_name_collisions(Queries)
+    end.
+
+-spec check_duplicate_output_columns([#typed_query{}]) -> ok | {error, term()}.
+check_duplicate_output_columns([]) ->
+    ok;
+check_duplicate_output_columns([Query | Rest]) ->
+    case duplicate_identifiers(Query#typed_query.returns) of
+        [] -> check_duplicate_output_columns(Rest);
+        Dupes -> {error, {duplicate_output_columns, Query#typed_query.root_name, Dupes}}
+    end.
+
+-spec duplicate_identifiers([#field{}]) -> [atom()].
+duplicate_identifiers(Fields) ->
+    Counts = lists:foldl(
+        fun(#field{identifier = Id}, Acc) ->
+            maps:update_with(Id, fun(N) -> N + 1 end, 1, Acc)
+        end,
+        #{},
+        Fields
+    ),
+    lists:usort([Id || {Id, N} <- maps:to_list(Counts), N > 1]).
+
+-spec check_enum_conflicts([#typed_query{}]) -> ok | {error, term()}.
+check_enum_conflicts(Queries) ->
+    Types = lists:flatmap(fun query_types/1, Queries),
+    Enums = codegen_type:enums(Types),
+    case enum_name_conflicts(Enums) of
+        [] -> ok;
+        [{Name, Oids} | _] -> {error, {enum_conflict, Name, Oids}}
+    end.
+
+-spec query_types(#typed_query{}) -> [marmot:type()].
+query_types(#typed_query{params = Params, returns = Returns}) ->
+    Params ++ [Field#field.type || Field <- Returns].
+
+-spec enum_name_conflicts([marmot:enum()]) -> [{binary(), [pos_integer()]}].
+enum_name_conflicts(Enums) ->
+    ByName = lists:foldl(
+        fun({Oid, Name, _Variants}, Acc) ->
+            maps:update_with(Name, fun(Oids) -> [Oid | Oids] end, [Oid], Acc)
+        end,
+        #{},
+        Enums
+    ),
+    lists:sort([
+        {Name, lists:sort(Oids)}
+     || {Name, Oids} <- maps:to_list(ByName), length(Oids) > 1
+    ]).
+
+-spec check_name_collisions([#typed_query{}]) -> ok | {error, term()}.
+check_name_collisions(Queries) ->
+    case duplicate_names(emitted_names(Queries)) of
+        [] -> ok;
+        [{Name, Arity} | _] -> {error, {name_collision, Name, Arity}}
+    end.
+
+-spec emitted_names([#typed_query{}]) -> [{atom(), non_neg_integer()}].
+emitted_names(Queries) ->
+    QueryNames = lists:flatmap(fun query_emitted_names/1, Queries),
+    Enums = codegen_type:enums(lists:flatmap(fun query_types/1, Queries)),
+    EnumNames = lists:flatmap(fun enum_emitted_names/1, Enums),
+    QueryNames ++ EnumNames ++ [{assume_not_null, 2}, {array_elem, 2}].
+
+-spec query_emitted_names(#typed_query{}) -> [{atom(), non_neg_integer()}].
+query_emitted_names(Query = #typed_query{params = Params, returns = Returns}) ->
+    Base = [{query_name(Query), length(Params)}, {sql_name(Query), 0}],
+    case Returns of
+        [] -> Base;
+        _ -> [{decode_name(Query), 1} | Base]
+    end.
+
+-spec enum_emitted_names(marmot:enum()) -> [{atom(), non_neg_integer()}].
+enum_emitted_names({_Oid, Name, _Variants}) ->
+    Atom = binary_to_atom(Name, utf8),
+    [{suffixed_atom(Atom, "_from_pg"), 1}, {suffixed_atom(Atom, "_to_pg"), 1}].
+
+-spec duplicate_names([{atom(), non_neg_integer()}]) -> [{atom(), non_neg_integer()}].
+duplicate_names(Names) ->
+    Counts = lists:foldl(
+        fun(Key, Acc) -> maps:update_with(Key, fun(N) -> N + 1 end, 1, Acc) end,
+        #{},
+        Names
+    ),
+    lists:sort([Key || {Key, N} <- maps:to_list(Counts), N > 1]).
 
 -spec export_list([#typed_query{}]) -> [{atom(), non_neg_integer()}].
 export_list(Queries) ->

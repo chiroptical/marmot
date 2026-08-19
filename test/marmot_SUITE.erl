@@ -41,7 +41,7 @@
     infer_types_simple/1,
     infer_types_left_join/1,
     infer_types_enum/1,
-    infer_types_unplannable/1,
+    infer_types_non_dml/1,
     infer_types_doc/1
 ]).
 
@@ -76,7 +76,7 @@ all() ->
         infer_types_simple,
         infer_types_left_join,
         infer_types_enum,
-        infer_types_unplannable,
+        infer_types_non_dml,
         infer_types_doc
     ].
 
@@ -397,18 +397,10 @@ infer_types_enum(Config) ->
         TypedQuery#typed_query.returns
     ).
 
-infer_types_unplannable(Config) ->
+infer_types_non_dml(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
-        {ok, #typed_query{
-            input_file_name = "",
-            starting_line = 0,
-            root_name = "",
-            content = ~"set search_path to public",
-            params = [],
-            returns = [],
-            doc = []
-        }},
+        {error, {non_dml_statement, ~"set"}},
         infer_types_for(MarmotConfig, ~"set search_path to public")
     ).
 

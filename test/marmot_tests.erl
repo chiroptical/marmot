@@ -159,6 +159,30 @@ identifier_reports_original_with_suffix_test() ->
         marmot:column_name_to_identifier(~"Weird Name!")
     ).
 
+identifier_unaliased_expression_test() ->
+    ?assertEqual(
+        {error, {unaliased_expression_column, ~"?column?"}},
+        marmot:column_name_to_identifier(~"?column?")
+    ),
+    Message = marmot:format_error({unaliased_expression_column, ~"?column?"}),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"?column?")).
+
+explain_error_kind_non_dml_test() ->
+    ?assertEqual(
+        {non_dml, ~"truncate"},
+        marmot:explain_error_kind(#{
+            code => ~"42601", message => ~"syntax error at or near \"truncate\""
+        })
+    ),
+    Message = marmot:format_error({non_dml_statement, ~"truncate"}),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"truncate")).
+
+explain_error_kind_unplannable_test() ->
+    ?assertEqual(
+        unplannable,
+        marmot:explain_error_kind(#{code => ~"0A000", message => ~"feature not supported"})
+    ).
+
 nullability_override_none_test() ->
     ?assertEqual(none, marmot:nullability_override(~"name")).
 
