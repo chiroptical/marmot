@@ -9,6 +9,10 @@ test:
 	rebar3 ct
 
 check:
-	rebar3 dialyzer
+	rebar3 as examples dialyzer
 
-.PHONY: build format test check
+examples:
+	rebar3 as examples escriptize
+	_build/examples/bin/generate_examples
+
+.PHONY: build format test check examples
