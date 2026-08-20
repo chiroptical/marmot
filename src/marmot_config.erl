@@ -7,7 +7,7 @@ pool configuration marmot should start itself. When `connection` is `none`,
 the caller has already started `Pool` and marmot only uses it.
 """.
 
--export([new/2, from_env/0]).
+-export([new/2, from_env/0, connection_from_env/0]).
 
 -record(#config{
     pool = marmot :: pgo:pool(),
@@ -35,6 +35,10 @@ and starts this pool.
 """.
 -spec from_env() -> #config{}.
 from_env() ->
+    #config{pool = marmot, connection = {some, connection_from_env()}}.
+
+-spec connection_from_env() -> pgo:pool_config().
+connection_from_env() ->
     Base = #{
         host => os:getenv("PGO_HOST", "127.0.0.1"),
         database => os:getenv("PGO_DATABASE", "marmot"),
@@ -42,12 +46,10 @@ from_env() ->
         password => os:getenv("PGO_PASSWORD", "marmot"),
         pool_size => pool_size_from_env()
     },
-    Connection =
-        case os:getenv("PGO_PORT") of
-            false -> Base;
-            Port -> Base#{port => list_to_integer(Port)}
-        end,
-    #config{pool = marmot, connection = {some, Connection}}.
+    case os:getenv("PGO_PORT") of
+        false -> Base;
+        Port -> Base#{port => list_to_integer(Port)}
+    end.
 
 -spec pool_size_from_env() -> pos_integer().
 pool_size_from_env() ->
