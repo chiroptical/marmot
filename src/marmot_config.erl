@@ -9,10 +9,10 @@ the caller has already started `Pool` and marmot only uses it.
 
 -export([new/2, from_env/0, connection_from_env/0]).
 
--record(#config{
+-record #config{
     pool = marmot :: pgo:pool(),
     connection = none :: none | {some, pgo:pool_config()}
-}).
+}.
 -export_record([config]).
 
 -spec new(pgo:pool(), none | {some, pgo:pool_config()}) -> #config{}.

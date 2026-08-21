@@ -19,17 +19,21 @@
 
 -type ex_mood() :: happy | sad | meh.
 
--record #get_event_row{id :: uuid:uuid(),
-                       happened_on :: calendar:date(),
-                       happened_at :: pg_timestamp:time(),
-                       recorded_at :: pg_timestamp:datetime() | infinity | '-infinity',
-                       tags :: [integer()]}.
+-record #get_event_row{
+    id :: uuid:uuid(),
+    happened_on :: calendar:date(),
+    happened_at :: pg_timestamp:time(),
+    recorded_at :: pg_timestamp:datetime() | infinity | '-infinity',
+    tags :: [integer()]
+}.
 
 -export_record([get_event_row]).
 
--record #get_user_row{id :: integer(),
-                      name :: none | {some, binary()},
-                      mood :: ex_mood()}.
+-record #get_user_row{
+    id :: integer(),
+    name :: none | {some, binary()},
+    mood :: ex_mood()
+}.
 
 -export_record([get_user_row]).
 
@@ -37,9 +41,11 @@
 
 -export_record([list_users_by_mood_row]).
 
--record #user_with_latest_order_row{user_id :: integer(),
-                                    order_id :: none | {some, integer()},
-                                    order_total :: none | {some, integer()}}.
+-record #user_with_latest_order_row{
+    user_id :: integer(),
+    order_id :: none | {some, integer()},
+    order_total :: none | {some, integer()}
+}.
 
 -export_record([user_with_latest_order_row]).
 

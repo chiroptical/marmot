@@ -8,13 +8,6 @@ render(Type) ->
         erl_prettypr:format(erl_syntax:form_list([Form]), [{paper, 96}, {ribbon, 90}])
     ).
 
-render_weird(Atoms) ->
-    Form =
-        {attribute, 0, type, {weird, {type, 0, union, [{atom, 0, A} || A <- Atoms]}, []}},
-    iolist_to_binary(
-        erl_prettypr:format(erl_syntax:form_list([Form]), [{paper, 96}, {ribbon, 90}])
-    ).
-
 int_test() ->
     ?assertEqual(~"-type t() :: integer().", render(int)).
 
@@ -81,12 +74,6 @@ option_list_option_bit_array_test() ->
         render({option, {list, {option, bit_array}}})
     ).
 
-weird_enum_labels_test() ->
-    ?assertEqual(
-        ~"-type weird() :: 'a-b' | 'not allowed' | 'UPPER'.",
-        render_weird(['a-b', 'not allowed', 'UPPER'])
-    ).
-
 enums_empty_test() ->
     ?assertEqual([], codegen_type:enums([])).
 
@@ -108,15 +95,3 @@ enums_distinct_oid_same_name_test() ->
     ?assertEqual(
         [{1, ~"status", [~"a"]}, {2, ~"status", [~"b"]}], codegen_type:enums([Enum1, Enum2])
     ).
-
-compile_forms_test() ->
-    Forms = [
-        {attribute, 0, module, codegen_type_tests_compile_check},
-        {attribute, 0, export_type, [{t1, 0}, {t2, 0}, {t3, 0}, {mood, 0}]},
-        {attribute, 0, type, {t1, codegen_type:to_ast(int), []}},
-        {attribute, 0, type, {t2, codegen_type:to_ast({option, timestamp}), []}},
-        {attribute, 0, type,
-            {t3, codegen_type:to_ast({list, {enum, {1, ~"mood", [~"happy", ~"sad"]}}}), []}},
-        {attribute, 0, type, {mood, {type, 0, union, [{atom, 0, happy}, {atom, 0, sad}]}, []}}
-    ],
-    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])).

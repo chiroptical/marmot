@@ -66,7 +66,7 @@ insert_without_returning(Config) ->
 syntax_error(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     Result = protocol:prepare_statement(MarmotConfig, ~"select from where"),
-    ?assertMatch({error, {prepare_failed, #{code := _}}}, Result).
+    ?assertMatch({error, {prepare_failed, #{code := ~"42601"}}}, Result).
 
 notice_during_parse(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),

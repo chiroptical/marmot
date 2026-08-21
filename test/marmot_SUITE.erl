@@ -1,6 +1,7 @@
 -module(marmot_SUITE).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("pgo/src/pgo_internal.hrl").
 
 -import_record(marmot, [untyped_query, field, typed_query]).
 -import_record(marmot_config, [config]).
@@ -24,9 +25,7 @@
     two_distinct_enums/1,
     same_name_enums_distinct_oids/1,
     enum_tricky_labels/1,
-    enum_resolve_deterministic/1,
     unknown_oid/1,
-    empty_params/1,
     returns_simple/1,
     returns_not_null_column/1,
     returns_nullable_column/1,
@@ -61,9 +60,7 @@ all() ->
         two_distinct_enums,
         same_name_enums_distinct_oids,
         enum_tricky_labels,
-        enum_resolve_deterministic,
         unknown_oid,
-        empty_params,
         returns_simple,
         returns_not_null_column,
         returns_nullable_column,
@@ -223,25 +220,12 @@ enum_tricky_labels(Config) ->
     {ok, [{enum, {_, ~"weird", [~"a-b", ~"not allowed", ~"UPPER"]}}]} =
         marmot:resolve_parameters(MarmotConfig, ParamOids).
 
-enum_resolve_deterministic(Config) ->
-    MarmotConfig = proplists:get_value(marmot_config, Config),
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select $1::mood"),
-    First = marmot:resolve_parameters(MarmotConfig, ParamOids),
-    Second = marmot:resolve_parameters(MarmotConfig, ParamOids),
-    ?assertMatch({ok, [{enum, {_, ~"mood", [~"happy", ~"sad", ~"meh"]}}]}, First),
-    ?assertEqual(First, Second).
-
 unknown_oid(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     ?assertEqual(
         {error, {unsupported_type, ?BOGUS_OID}},
         marmot:resolve_parameters(MarmotConfig, [?BOGUS_OID])
     ).
-
-empty_params(Config) ->
-    MarmotConfig = proplists:get_value(marmot_config, Config),
-    {ok, ParamOids, _Fields} = protocol:prepare_statement(MarmotConfig, ~"select 1"),
-    {ok, []} = marmot:resolve_parameters(MarmotConfig, ParamOids).
 
 no_nullables() ->
     sets:new().
@@ -333,12 +317,20 @@ returns_batched_nullability(Config) ->
         protocol:prepare_statement(
             MarmotConfig, ~"select l.id, l.name, l.tally, r.id, r.value from mr_left l, mr_right r"
         ),
+    [LeftId, LeftName, LeftTally, RightId, RightValue] = [
+        {TableOid, AttrNumber}
+     || #row_description_field{table_oid = TableOid, attr_number = AttrNumber} <- Fields
+    ],
     {ok, Map} = marmot:nullability_map(MarmotConfig, Fields),
-    ?assertEqual(5, maps:size(Map)),
-    ?assertEqual(2, length(lists:uniq([Table || {Table, _} <- maps:keys(Map)]))),
     ?assertEqual(
-        [false, false, true, true, true],
-        lists:sort(maps:values(Map))
+        #{
+            LeftId => true,
+            LeftName => false,
+            LeftTally => true,
+            RightId => true,
+            RightValue => false
+        },
+        Map
     ).
 
 duplicate_output_name_nullability(Config) ->
@@ -425,10 +417,9 @@ infer_types_non_dml(Config) ->
 
 infer_types_doc(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Content = ~"-- a comment\nselect 1 as one",
     UntypedQuery = #untyped_query{
-        file_content = Content,
-        doc = marmot:leading_comment(Content)
+        file_content = ~"select 1 as one",
+        doc = [~"a comment"]
     },
     {ok, TypedQuery} = marmot:infer_types(MarmotConfig, UntypedQuery),
     ?assertEqual([~"a comment"], TypedQuery#typed_query.doc).

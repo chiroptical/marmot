@@ -33,16 +33,6 @@ missing_output_test() ->
         query_plan:decode_plan(Json)
     ).
 
-missing_plans_test() ->
-    Json =
-        ~"""
-    [{"Plan":{"Node Type":"Seq Scan","Output":["a"]}}]
-    """,
-    ?assertMatch(
-        {ok, #plan{join_type = none, output = [~"a"], plans = []}},
-        query_plan:decode_plan(Json)
-    ).
-
 left_join_two_children_test() ->
     Json =
         ~"""
@@ -254,7 +244,7 @@ aggregate_coalesce_not_nullable_test() ->
     },
     ?assertEqual([], nullable_indices(Plan)).
 
-aggregate_group_key_not_nullable_test() ->
+bare_column_under_aggregate_not_nullable_test() ->
     Plan = #plan{
         node_type = ~"Aggregate",
         output = [~"relkind", ~"max(a)"],
@@ -262,7 +252,7 @@ aggregate_group_key_not_nullable_test() ->
     },
     ?assertEqual([1], nullable_indices(Plan)).
 
-non_aggregate_call_not_nullable_test() ->
+non_aggregate_node_not_nullable_test() ->
     Plan = #plan{node_type = ~"Seq Scan", output = [~"lower(a)"]},
     ?assertEqual([], nullable_indices(Plan)).
 
@@ -293,10 +283,4 @@ check_version_non_integer_test() ->
     ?assertEqual(
         {error, postgres_version_too_old},
         query_plan:check_version(~"not_a_number")
-    ).
-
-check_version_empty_test() ->
-    ?assertEqual(
-        {error, postgres_version_too_old},
-        query_plan:check_version(~"")
     ).

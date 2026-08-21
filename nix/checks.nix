@@ -1,13 +1,16 @@
 {
   stdenv,
   beam29Packages,
+  nixfmt,
   postgresql,
   postgresqlTestHook,
+  treefmt,
   callPackage,
   src,
 }:
 let
   deps = callPackage ./deps.nix { };
+  erlfmt = callPackage ./erlfmt.nix { };
 
   rebar3Check =
     {
@@ -48,13 +51,17 @@ in
   format = stdenv.mkDerivation {
     name = "marmot-format";
     inherit src;
-    nativeBuildInputs = [ beam29Packages.erlfmt ];
+    nativeBuildInputs = [
+      erlfmt
+      nixfmt
+      treefmt
+    ];
     dontConfigure = true;
     dontBuild = true;
     doCheck = true;
     checkPhase = ''
       runHook preCheck
-      erlfmt --check
+      treefmt --no-cache --fail-on-change
       runHook postCheck
     '';
     installPhase = ''

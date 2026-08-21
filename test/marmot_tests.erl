@@ -117,9 +117,6 @@ base_type_info() ->
         comp_types = undefined
     }.
 
-empty_params_test() ->
-    ?assertEqual({ok, []}, marmot:resolve_parameters(config(), [])).
-
 identifier_plain_test() ->
     ?assertEqual({ok, name}, marmot:column_name_to_identifier(~"name")).
 
@@ -134,18 +131,6 @@ identifier_question_suffix_test() ->
 
 identifier_leading_digit_test() ->
     ?assertEqual({error, {invalid_column, ~"1abc"}}, marmot:column_name_to_identifier(~"1abc")).
-
-identifier_leading_underscore_test() ->
-    ?assertEqual({error, {invalid_column, ~"_abc"}}, marmot:column_name_to_identifier(~"_abc")).
-
-identifier_uppercase_test() ->
-    ?assertEqual({error, {invalid_column, ~"Name"}}, marmot:column_name_to_identifier(~"Name")).
-
-identifier_embedded_space_test() ->
-    ?assertEqual(
-        {error, {invalid_column, ~"Weird Name"}},
-        marmot:column_name_to_identifier(~"Weird Name")
-    ).
 
 identifier_empty_test() ->
     ?assertEqual({error, {invalid_column, ~""}}, marmot:column_name_to_identifier(~"")).

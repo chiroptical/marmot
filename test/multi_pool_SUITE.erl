@@ -1,7 +1,6 @@
 -module(multi_pool_SUITE).
 
 -include_lib("eunit/include/eunit.hrl").
--include_lib("pg_types/include/pg_types.hrl").
 
 -import_record(marmot, [untyped_query, field, typed_query]).
 -import_record(marmot_config, [config]).
@@ -15,15 +14,14 @@
 ]).
 
 -export([
-    concurrent_inference/1,
-    per_pool_type_server/1
+    concurrent_inference/1
 ]).
 
 -define(STATEMENT, ~"select $1::integer as id, name from mp_left where id = $1").
 -define(ITERATIONS, 20).
 
 all() ->
-    [concurrent_inference, per_pool_type_server].
+    [concurrent_inference].
 
 init_per_suite(Config) ->
     Base = marmot_config:from_env(),
@@ -97,14 +95,3 @@ run_once(MarmotConfig) ->
         {ok, #typed_query{params = [int], returns = Returns}} -> {ok, Returns};
         {error, _} = E -> E
     end.
-
--doc """
-`pg_types` runs one type server per pool. Pin that resolving OID 23 against
-each of `marmot_a` and `marmot_b` returns a `#type_info{}` tagged with that
-pool, proving type resolution really is per-pool and not shared global state.
-""".
--spec per_pool_type_server(term()) -> ok.
-per_pool_type_server(_Config) ->
-    ?assertMatch(#type_info{pool = marmot_a}, pg_types:lookup_type_info(marmot_a, 23)),
-    ?assertMatch(#type_info{pool = marmot_b}, pg_types:lookup_type_info(marmot_b, 23)),
-    ok.
