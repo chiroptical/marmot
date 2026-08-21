@@ -59,8 +59,6 @@ init_per_suite(Config) ->
             #{pool => Pool}
         ),
     #{command := create} =
-        pgo:query("create table cg_empty (id int not null)", [], #{pool => Pool}),
-    #{command := create} =
         pgo:query(
             "create table cg_weird_items (id int not null, w cg_weird not null)",
             [],
@@ -94,7 +92,7 @@ end_per_suite(Config) ->
 drop_tables(Pool) ->
     [
         pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
-     || N <- [cg_items, cg_empty, cg_weird_items]
+     || N <- [cg_items, cg_weird_items]
     ],
     ok.
 
@@ -194,7 +192,7 @@ array_column_decodes_list(Config) ->
 wrongly_guessed_not_null_column_errors(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     Mod = generate_and_load(
-        MarmotConfig, cg_agg_sql, "cg_agg", ~"select max(id) as m from cg_empty"
+        MarmotConfig, cg_agg_sql, "cg_agg", ~"select nullif(1, 1) as m"
     ),
     ?assertEqual({error, {unexpected_null, m}}, Mod:cg_agg()).
 
