@@ -1,26 +1,33 @@
 marmot
 =====
 
+[![NixCI](https://nix-ci.com/badge/gh:chiroptical:marmot)](https://nix-ci.com/gh:chiroptical:marmot)
+
 A pure Erlang implementation of [squirrel][squirrel]
 
 ## Status
 
-Incomplete
+Working, unreleased. Requires PostgreSQL 16 or newer.
 
 ## Example
 
-Generated SQL may look like,
+`src/sql/get_user.sql`,
+
+```sql
+-- Get a user by id.
+select id, name, mood from ex_users where id = $1
+```
+
+generates `src/sql.erl`,
 
 ```erlang
--module(sql_generated).
+-record #get_user_row{id :: integer(),
+                      name :: none | {some, binary()},
+                      mood :: ex_mood()}.
 
--export([get/1]).
-
--spec get(SomeUuid :: uuid:uuid()) ->
-    {ok, OtherUuid :: uuid:uuid(), AnotherUuid :: uuid:uuid()}.
-get(SomeUuid) ->
-    %% ...
-    {ok, OtherUuid, AnotherUuid}.
+-spec get_user(Arg1 :: integer()) ->
+    {ok, non_neg_integer(), [#get_user_row{}]}
+    | {error, term()}.
 ```
 
 Consumer,
@@ -28,13 +35,14 @@ Consumer,
 ```erlang
 -module(consumer_module).
 
--export([some_api/0]).
+-export([some_api/1]).
 
--spec some_api() -> uuid:uuid().
-some_api() ->
-    %% Note: currently ELP will not pick up incorrect tuple size, but dialyzer will
-    {ok, OtherUuid, _AnotherUuid} = sql_generated:get(uuid:get_v4()),
-    OtherUuid.
+-spec some_api(integer()) -> none | {some, binary()}.
+some_api(Id) ->
+    {ok, 1, [Row]} = sql:get_user(Id),
+    records:get(name, Row).
 ```
+
+See [`examples/`](examples/) for the whole generated module and a consumer of it.
 
 [squirrel]: https://github.com/giacomocavalieri/squirrel

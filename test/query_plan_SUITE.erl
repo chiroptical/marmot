@@ -76,37 +76,13 @@ parameterized_query(Config) ->
 
 left_join(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    {ok, #plan{join_type = {some, left_join}, plans = Plans}} =
+    {ok, #plan{join_type = {some, left_join}, output = Output, plans = [Left, Right]}} =
         query_plan:from_untyped_query(MarmotConfig, #untyped_query{
             file_content = ~"select a.name, b.value from qp_a a left join qp_b b on a.id = b.id"
         }),
-    ?assertEqual(
-        [
-            #plan{
-                join_type = none,
-                output = [~"a.name", ~"a.id"],
-                plans = [
-                    #plan{
-                        join_type = none,
-                        output = [~"a.name", ~"a.id"],
-                        plans = []
-                    }
-                ]
-            },
-            #plan{
-                join_type = none,
-                output = [~"b.value", ~"b.id"],
-                plans = [
-                    #plan{
-                        join_type = none,
-                        output = [~"b.value", ~"b.id"],
-                        plans = []
-                    }
-                ]
-            }
-        ],
-        Plans
-    ).
+    ?assertEqual([~"a.name", ~"b.value"], Output),
+    ?assertEqual([~"a.name", ~"a.id"], Left#plan.output),
+    ?assertEqual([~"b.value", ~"b.id"], Right#plan.output).
 
 invalid_query(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),

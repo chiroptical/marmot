@@ -10,9 +10,18 @@ simple_seq_scan_test() ->
     [{"Plan":{"Node Type":"Seq Scan","Output":["a","b"]}}]
     """,
     ?assertMatch(
-        {ok, #plan{join_type = none, output = [~"a", ~"b"], plans = []}},
+        {ok, #plan{
+            node_type = ~"Seq Scan", join_type = none, output = [~"a", ~"b"], plans = []
+        }},
         query_plan:decode_plan(Json)
     ).
+
+missing_node_type_test() ->
+    Json =
+        ~"""
+    [{"Plan":{"Output":["a"]}}]
+    """,
+    ?assertMatch({ok, #plan{node_type = ~""}}, query_plan:decode_plan(Json)).
 
 missing_output_test() ->
     Json =
@@ -220,6 +229,50 @@ duplicate_output_names_test() ->
         plans = [#plan{output = [~"a.id"]}, #plan{output = [~"b.v"]}]
     },
     ?assertEqual([0, 1], nullable_indices(Plan)).
+
+aggregate_nullable_test() ->
+    Plan = #plan{
+        node_type = ~"Aggregate",
+        output = [~"max(a)"],
+        plans = [#plan{node_type = ~"Seq Scan", output = [~"a"]}]
+    },
+    ?assertEqual([0], nullable_indices(Plan)).
+
+aggregate_count_not_nullable_test() ->
+    Plan = #plan{
+        node_type = ~"Aggregate",
+        output = [~"count(*)", ~"max(a)"],
+        plans = [#plan{node_type = ~"Seq Scan", output = [~"a"]}]
+    },
+    ?assertEqual([1], nullable_indices(Plan)).
+
+aggregate_coalesce_not_nullable_test() ->
+    Plan = #plan{
+        node_type = ~"Aggregate",
+        output = [~"COALESCE(max(a), 0)"],
+        plans = [#plan{node_type = ~"Seq Scan", output = [~"a"]}]
+    },
+    ?assertEqual([], nullable_indices(Plan)).
+
+aggregate_group_key_not_nullable_test() ->
+    Plan = #plan{
+        node_type = ~"Aggregate",
+        output = [~"relkind", ~"max(a)"],
+        plans = [#plan{node_type = ~"Seq Scan", output = [~"relkind", ~"a"]}]
+    },
+    ?assertEqual([1], nullable_indices(Plan)).
+
+non_aggregate_call_not_nullable_test() ->
+    Plan = #plan{node_type = ~"Seq Scan", output = [~"lower(a)"]},
+    ?assertEqual([], nullable_indices(Plan)).
+
+aggregate_init_plan_not_nullable_test() ->
+    Plan = #plan{
+        node_type = ~"Aggregate",
+        output = [~"(InitPlan 1).col1"],
+        plans = [#plan{node_type = ~"Seq Scan", output = [~"a"]}]
+    },
+    ?assertEqual([], nullable_indices(Plan)).
 
 nullable_indices(Plan) ->
     lists:sort(sets:to_list(query_plan:nullables_from_plan(Plan))).

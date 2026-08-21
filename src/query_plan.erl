@@ -27,6 +27,7 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
 -type join_type() :: full_join | left_join | right_join | inner_join | semi_join.
 
 -record(#plan{
+    node_type = ~"" :: binary(),
     join_type = none :: none | {some, join_type()},
     output = [] :: [binary()],
     plans = [] :: [#plan{}]
@@ -63,6 +64,7 @@ decode_plan(JsonBinary) ->
 -spec to_plan(map()) -> #plan{}.
 to_plan(Map) ->
     #plan{
+        node_type = maps:get(~"Node Type", Map, ~""),
         join_type = to_join_type(maps:get(~"Join Type", Map, none)),
         output = maps:get(~"Output", Map, []),
         plans = [to_plan(P) || P <- maps:get(~"Plans", Map, [])]
@@ -85,7 +87,8 @@ nullables_from_plan(#plan{} = Plan) ->
     do_nullables_from_plan(Plan, Outputs, sets:new()).
 
 -spec do_nullables_from_plan(#plan{}, #{binary() => [non_neg_integer()]}, sets:set()) -> sets:set().
-do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryOutputs, Nullables) ->
+do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryOutputs, Nullables0) ->
+    Nullables = sets:union(aggregate_indices(Plan, QueryOutputs), Nullables0),
     case {JoinType, Plans} of
         {{some, full_join}, _} ->
             sets:union(plan_outputs_indices(Plan, QueryOutputs), Nullables);
@@ -111,6 +114,28 @@ do_nullables_from_plan(#plan{join_type = JoinType, plans = Plans} = Plan, QueryO
 
 -spec plan_outputs_indices(#plan{}, #{binary() => [non_neg_integer()]}) -> sets:set().
 plan_outputs_indices(#plan{output = Output}, QueryOutputs) ->
+    output_indices(Output, QueryOutputs).
+
+-spec aggregate_indices(#plan{}, #{binary() => [non_neg_integer()]}) -> sets:set().
+aggregate_indices(#plan{node_type = ~"Aggregate", output = Output}, QueryOutputs) ->
+    output_indices([E || E <- Output, nullable_aggregate(E)], QueryOutputs);
+aggregate_indices(#plan{}, _QueryOutputs) ->
+    sets:new().
+
+-spec nullable_aggregate(binary()) -> boolean().
+nullable_aggregate(Expression) ->
+    case binary:split(Expression, ~"(") of
+        [Callee, _Arguments] ->
+            Name = string:lowercase(Callee),
+            characters:is_valid_character_set(Name) andalso
+                Name =/= ~"count" andalso
+                Name =/= ~"coalesce";
+        _ ->
+            false
+    end.
+
+-spec output_indices([binary()], #{binary() => [non_neg_integer()]}) -> sets:set().
+output_indices(Names, QueryOutputs) ->
     lists:foldl(
         fun(Name, Acc) ->
             case QueryOutputs of
@@ -119,7 +144,7 @@ plan_outputs_indices(#plan{output = Output}, QueryOutputs) ->
             end
         end,
         sets:new(),
-        Output
+        Names
     ).
 
 -spec outputs_index_map([binary()]) -> #{binary() => [non_neg_integer()]}.

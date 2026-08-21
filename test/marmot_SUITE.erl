@@ -38,6 +38,8 @@
     returns_batched_nullability/1,
     duplicate_output_name_nullability/1,
     aggregate_over_empty_table/1,
+    count_over_empty_table/1,
+    grouped_aggregate/1,
     infer_types_simple/1,
     infer_types_left_join/1,
     infer_types_enum/1,
@@ -73,6 +75,8 @@ all() ->
         returns_batched_nullability,
         duplicate_output_name_nullability,
         aggregate_over_empty_table,
+        count_over_empty_table,
+        grouped_aggregate,
         infer_types_simple,
         infer_types_left_join,
         infer_types_enum,
@@ -140,8 +144,6 @@ drop_schemas(Pool) ->
     ],
     ok.
 
-init_per_testcase(aggregate_over_empty_table, _Config) ->
-    {skip, "TODO: aggregates over zero rows are typed non-null"};
 init_per_testcase(_TestCase, Config) ->
     Config.
 
@@ -357,6 +359,23 @@ aggregate_over_empty_table(Config) ->
     ?assertEqual(
         {ok, [#field{identifier = max, type = {option, int}}]},
         returns_with_plan(MarmotConfig, ~"select max(id) from mr_left")
+    ).
+
+count_over_empty_table(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [#field{identifier = count, type = int, assumed_not_null = true}]},
+        returns_with_plan(MarmotConfig, ~"select count(*) from mr_left")
+    ).
+
+grouped_aggregate(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = id, type = int},
+            #field{identifier = max, type = {option, int}}
+        ]},
+        returns_with_plan(MarmotConfig, ~"select id, max(tally) from mr_left group by id")
     ).
 
 infer_types_for(MarmotConfig, Statement) ->
