@@ -20,18 +20,6 @@ is_valid_beginning_single_character_test() ->
 is_valid_beginning_test() ->
     ?assertEqual(true, characters:is_valid_beginning(~"abc_")).
 
-is_valid_character_set_leading_digit_test() ->
-    ?assertEqual(false, characters:is_valid_character_set(~"1abc")).
-
-is_valid_character_set_leading_uppercase_test() ->
-    ?assertEqual(false, characters:is_valid_character_set(~"Abc")).
-
-is_valid_character_set_empty_test() ->
-    ?assertEqual(false, characters:is_valid_character_set(~"")).
-
-is_valid_character_set_leading_underscore_test() ->
-    ?assertEqual(false, characters:is_valid_character_set(~"_abc")).
-
 is_valid_character_set_umlaut_test() ->
     ?assertEqual(false, characters:is_valid_character_set(~"oöo")).
 

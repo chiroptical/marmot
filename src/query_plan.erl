@@ -26,12 +26,12 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
 
 -type join_type() :: full_join | left_join | right_join | inner_join | semi_join.
 
--record(#plan{
+-record #plan{
     node_type = ~"" :: binary(),
     join_type = none :: none | {some, join_type()},
     output = [] :: [binary()],
     plans = [] :: [#plan{}]
-}).
+}.
 -export_record([plan]).
 
 -doc """

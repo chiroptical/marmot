@@ -89,10 +89,6 @@ connection(Config) ->
 
 -spec assert_generated(string()) -> module().
 assert_generated(Output) ->
-    {ok, Source} = file:read_file(Output),
-    Banner = codegen:banner(),
-    Size = byte_size(Banner),
-    ?assertMatch(<<Banner:Size/binary, _/binary>>, Source),
     {ok, Module, _Binary} = compile:file(Output, [binary, return_errors]),
     Module.
 

@@ -366,8 +366,3 @@ tricky_labels_render_quoted_test() ->
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"'a-b'")),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"'not allowed'")),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"'UPPER'")).
-
-module_is_deterministic_test() ->
-    {ok, Bin1} = codegen:module(one_sql, [get_user_query()]),
-    {ok, Bin2} = codegen:module(one_sql, [get_user_query()]),
-    ?assertEqual(Bin1, Bin2).

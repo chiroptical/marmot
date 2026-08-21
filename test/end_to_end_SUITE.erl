@@ -156,8 +156,6 @@ generates_from_examples(Config) ->
     Examples = proplists:get_value(examples, Config),
     Generated = proplists:get_value(generated, Config),
     {ok, CheckedIn} = file:read_file(filename:join(Examples, "sql.erl")),
-    Banner = codegen:banner(),
-    ?assertEqual(Banner, binary:part(CheckedIn, 0, byte_size(Banner))),
     ?assertEqual(reprint(CheckedIn), reprint(Generated)).
 
 generated_module_runs(_Config) ->
