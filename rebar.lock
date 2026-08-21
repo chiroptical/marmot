@@ -4,7 +4,7 @@
  {<<"pg_types">>,{pkg,<<"pg_types">>,<<"0.6.0">>},1},
  {<<"pgo">>,
   {git,"https://github.com/chiroptical/pgo",
-       {ref,"4a06cc9a6c0a52ac5d9584ddf0644831623a4dd1"}},
+       {ref,"ad293eadf9c34cc68b9c8b2b9c8c45919798f947"}},
   0},
  {<<"quickrand">>,
   {git,"https://github.com/okeuday/quickrand.git",

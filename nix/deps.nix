@@ -24,8 +24,8 @@ let
     pgo = fetchFromGitHub {
       owner = "chiroptical";
       repo = "pgo";
-      rev = "4a06cc9a6c0a52ac5d9584ddf0644831623a4dd1";
-      hash = "sha256-/eMxImU4VRNZpmZ+GuKlgsjPobv+oaqkE3SHTwlHUqI=";
+      rev = "ad293eadf9c34cc68b9c8b2b9c8c45919798f947";
+      hash = "sha256-xZsXRLMsWZvoMzKRsydWnVKE3NCOVJRaRYJcLrrz7PM=";
     };
     quickrand = fetchFromGitHub {
       owner = "okeuday";

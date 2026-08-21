@@ -73,6 +73,15 @@ in
     '';
   };
 
+  dialyzer = rebar3Check {
+    name = "marmot-dialyzer";
+    checkPhase = ''
+      runHook preCheck
+      rebar3 as examples dialyzer
+      runHook postCheck
+    '';
+  };
+
   ct = rebar3Check {
     name = "marmot-ct";
 

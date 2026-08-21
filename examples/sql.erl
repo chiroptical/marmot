@@ -2,16 +2,18 @@
 
 -module(sql).
 
--export([get_event/1,
-         get_event_sql/0,
-         get_user/1,
-         get_user_sql/0,
-         insert_user/3,
-         insert_user_sql/0,
-         list_users_by_mood/1,
-         list_users_by_mood_sql/0,
-         user_with_latest_order/1,
-         user_with_latest_order_sql/0]).
+-export([
+    get_event/1,
+    get_event_sql/0,
+    get_user/1,
+    get_user_sql/0,
+    insert_user/3,
+    insert_user_sql/0,
+    list_users_by_mood/1,
+    list_users_by_mood_sql/0,
+    user_with_latest_order/1,
+    user_with_latest_order_sql/0
+]).
 
 -export_type([ex_mood/0]).
 
@@ -42,159 +44,214 @@
 -export_record([user_with_latest_order_row]).
 
 get_event_sql() ->
-    <<"-- Get an event by id.\nselect id, happened_on, happened_at, "
-      "recorded_at, tags from ex_events where id = $1\n"/utf8>>.
+    <<
+        "-- Get an event by id.\nselect id, happened_on, happened_at, "
+        "recorded_at, tags from ex_events where id = $1\n"/utf8
+    >>.
 
--doc("Get an event by id.").
+-doc "Get an event by id.".
 
--spec get_event(Arg1 :: uuid:uuid()) -> {ok, non_neg_integer(), [#get_event_row{}]} |
-                                        {error, term()}.
+-spec get_event(Arg1 :: uuid:uuid()) ->
+    {ok, non_neg_integer(), [#get_event_row{}]}
+    | {error, term()}.
 
 get_event(Arg1) ->
-    Opts = #{decode_opts =>
-                 [{return_rows_as_maps, false},
-                  {column_name_as_atom, false},
-                  {decode_fun, undefined}]},
+    Opts = #{
+        decode_opts =>
+            [
+                {return_rows_as_maps, false},
+                {column_name_as_atom, false},
+                {decode_fun, undefined}
+            ]
+    },
     case pgo:query(get_event_sql(), [Arg1], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try {ok, N, [decode_get_event_row(R) || R <- Rows]} catch
+            try
+                {ok, N, [decode_get_event_row(R) || R <- Rows]}
+            catch
                 {marmot_decode_error, Reason} -> {error, Reason}
             end;
-        {error, _} = E -> E
+        {error, _} = E ->
+            E
     end.
 
 decode_get_event_row({C1, C2, C3, C4, C5}) ->
-    #get_event_row{id = C1, happened_on = C2, happened_at = C3, recorded_at = C4,
-                   tags = [array_elem(tags, X) || X <- C5]}.
+    #get_event_row{
+        id = C1,
+        happened_on = C2,
+        happened_at = C3,
+        recorded_at = C4,
+        tags = [array_elem(tags, X) || X <- C5]
+    }.
 
 get_user_sql() ->
-    <<"-- Get a user by id.\nselect id, name, mood from ex_users where "
-      "id = $1\n"/utf8>>.
+    <<
+        "-- Get a user by id.\nselect id, name, mood from ex_users where "
+        "id = $1\n"/utf8
+    >>.
 
--doc("Get a user by id.").
+-doc "Get a user by id.".
 
--spec get_user(Arg1 :: integer()) -> {ok, non_neg_integer(), [#get_user_row{}]} |
-                                     {error, term()}.
+-spec get_user(Arg1 :: integer()) ->
+    {ok, non_neg_integer(), [#get_user_row{}]}
+    | {error, term()}.
 
 get_user(Arg1) ->
-    Opts = #{decode_opts =>
-                 [{return_rows_as_maps, false},
-                  {column_name_as_atom, false},
-                  {decode_fun, undefined}]},
+    Opts = #{
+        decode_opts =>
+            [
+                {return_rows_as_maps, false},
+                {column_name_as_atom, false},
+                {decode_fun, undefined}
+            ]
+    },
     case pgo:query(get_user_sql(), [Arg1], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try {ok, N, [decode_get_user_row(R) || R <- Rows]} catch
+            try
+                {ok, N, [decode_get_user_row(R) || R <- Rows]}
+            catch
                 {marmot_decode_error, Reason} -> {error, Reason}
             end;
-        {error, _} = E -> E
+        {error, _} = E ->
+            E
     end.
 
 decode_get_user_row({C1, C2, C3}) ->
-    #get_user_row{id = C1,
-                  name =
-                      case C2 of
-                          null -> none;
-                          V -> {some, V}
-                      end,
-                  mood = to_ex_mood(C3)}.
+    #get_user_row{
+        id = C1,
+        name =
+            case C2 of
+                null -> none;
+                V -> {some, V}
+            end,
+        mood = to_ex_mood(C3)
+    }.
 
 insert_user_sql() ->
-    <<"-- Insert a user. Returns nothing, so the generated function "
-      "yields {ok, Count}.\ninsert into ex_users (id, name, mood) "
-      "values ($1, $2, $3)\n"/utf8>>.
+    <<
+        "-- Insert a user. Returns nothing, so the generated function "
+        "yields {ok, Count}.\ninsert into ex_users (id, name, mood) "
+        "values ($1, $2, $3)\n"/utf8
+    >>.
 
--doc("Insert a user. Returns nothing, so the generated function yields "
-     "{ok, Count}.").
+-doc "Insert a user. Returns nothing, so the generated function yields "
+"{ok, Count}.".
 
--spec insert_user(Arg1 :: integer(), Arg2 :: binary(), Arg3 :: ex_mood()) -> {ok,
-                                                                              non_neg_integer()} |
-                                                                             {error, term()}.
+-spec insert_user(Arg1 :: integer(), Arg2 :: binary(), Arg3 :: ex_mood()) ->
+    {ok, non_neg_integer()}
+    | {error, term()}.
 
 insert_user(Arg1, Arg2, Arg3) ->
-    Opts = #{decode_opts =>
-                 [{return_rows_as_maps, false},
-                  {column_name_as_atom, false},
-                  {decode_fun, undefined}]},
+    Opts = #{
+        decode_opts =>
+            [
+                {return_rows_as_maps, false},
+                {column_name_as_atom, false},
+                {decode_fun, undefined}
+            ]
+    },
     case pgo:query(insert_user_sql(), [Arg1, Arg2, from_ex_mood(Arg3)], Opts) of
         #{num_rows := N} -> {ok, N};
         {error, _} = E -> E
     end.
 
 list_users_by_mood_sql() ->
-    <<"-- List every user in a given mood, oldest id first.\nselect "
-      "id, name from ex_users where mood = $1 order by id\n"/utf8>>.
+    <<
+        "-- List every user in a given mood, oldest id first.\nselect "
+        "id, name from ex_users where mood = $1 order by id\n"/utf8
+    >>.
 
--doc("List every user in a given mood, oldest id first.").
+-doc "List every user in a given mood, oldest id first.".
 
--spec list_users_by_mood(Arg1 :: ex_mood()) -> {ok,
-                                                non_neg_integer(),
-                                                [#list_users_by_mood_row{}]} |
-                                               {error, term()}.
+-spec list_users_by_mood(Arg1 :: ex_mood()) ->
+    {ok, non_neg_integer(), [#list_users_by_mood_row{}]}
+    | {error, term()}.
 
 list_users_by_mood(Arg1) ->
-    Opts = #{decode_opts =>
-                 [{return_rows_as_maps, false},
-                  {column_name_as_atom, false},
-                  {decode_fun, undefined}]},
+    Opts = #{
+        decode_opts =>
+            [
+                {return_rows_as_maps, false},
+                {column_name_as_atom, false},
+                {decode_fun, undefined}
+            ]
+    },
     case pgo:query(list_users_by_mood_sql(), [from_ex_mood(Arg1)], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]} catch
+            try
+                {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]}
+            catch
                 {marmot_decode_error, Reason} -> {error, Reason}
             end;
-        {error, _} = E -> E
+        {error, _} = E ->
+            E
     end.
 
 decode_list_users_by_mood_row({C1, C2}) ->
-    #list_users_by_mood_row{id = C1,
-                            name =
-                                case C2 of
-                                    null -> none;
-                                    V -> {some, V}
-                                end}.
+    #list_users_by_mood_row{
+        id = C1,
+        name =
+            case C2 of
+                null -> none;
+                V -> {some, V}
+            end
+    }.
 
 user_with_latest_order_sql() ->
-    <<"-- A user and their most recent order, if they have one.\nselect "
-      "u.id as user_id, o.id as order_id, o.total as order_total\nfrom "
-      "ex_users u\nleft join ex_orders o on o.user_id = u.id\nwhere "
-      "u.id = $1\norder by o.id desc\n"/utf8>>.
+    <<
+        "-- A user and their most recent order, if they have one.\nselect "
+        "u.id as user_id, o.id as order_id, o.total as order_total\nfrom "
+        "ex_users u\nleft join ex_orders o on o.user_id = u.id\nwhere "
+        "u.id = $1\norder by o.id desc\n"/utf8
+    >>.
 
--doc("A user and their most recent order, if they have one.").
+-doc "A user and their most recent order, if they have one.".
 
--spec user_with_latest_order(Arg1 :: integer()) -> {ok,
-                                                    non_neg_integer(),
-                                                    [#user_with_latest_order_row{}]} |
-                                                   {error, term()}.
+-spec user_with_latest_order(Arg1 :: integer()) ->
+    {ok, non_neg_integer(), [#user_with_latest_order_row{}]}
+    | {error, term()}.
 
 user_with_latest_order(Arg1) ->
-    Opts = #{decode_opts =>
-                 [{return_rows_as_maps, false},
-                  {column_name_as_atom, false},
-                  {decode_fun, undefined}]},
+    Opts = #{
+        decode_opts =>
+            [
+                {return_rows_as_maps, false},
+                {column_name_as_atom, false},
+                {decode_fun, undefined}
+            ]
+    },
     case pgo:query(user_with_latest_order_sql(), [Arg1], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]} catch
+            try
+                {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]}
+            catch
                 {marmot_decode_error, Reason} -> {error, Reason}
             end;
-        {error, _} = E -> E
+        {error, _} = E ->
+            E
     end.
 
 decode_user_with_latest_order_row({C1, C2, C3}) ->
-    #user_with_latest_order_row{user_id = C1,
-                                order_id =
-                                    case C2 of
-                                        null -> none;
-                                        V -> {some, V}
-                                    end,
-                                order_total =
-                                    case C3 of
-                                        null -> none;
-                                        V -> {some, V}
-                                    end}.
+    #user_with_latest_order_row{
+        user_id = C1,
+        order_id =
+            case C2 of
+                null -> none;
+                V -> {some, V}
+            end,
+        order_total =
+            case C3 of
+                null -> none;
+                V -> {some, V}
+            end
+    }.
 
-array_elem(Col, null) -> throw({marmot_decode_error, {unexpected_null_element, Col}});
+array_elem(Col, null) ->
+    throw({marmot_decode_error, {unexpected_null_element, Col}});
 array_elem(Col, {array, _}) ->
     throw({marmot_decode_error, {unsupported_multidimensional_array, Col}});
-array_elem(_Col, V) -> V.
+array_elem(_Col, V) ->
+    V.
 
 to_ex_mood(<<"happy">>) -> happy;
 to_ex_mood(<<"sad">>) -> sad;
