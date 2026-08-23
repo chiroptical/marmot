@@ -10,6 +10,7 @@ authored_reasons(marmot) ->
         {non_dml_statement, ~"set"},
         {unsupported_type, ~"money"},
         {unsupported_type, 790},
+        {empty_enum, ~"mood"},
         {nullability_lookup_failed, [{16384, 1}]},
         {prepare_failed, #{
             code => ~"42P01",
