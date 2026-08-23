@@ -17,6 +17,7 @@
     zero_config_scan/1,
     no_query_directories/1,
     aggregates_errors/1,
+    one_failing_query_does_not_change_another/1,
     refuses_to_overwrite/1,
     regenerates_deterministically/1,
     starts_and_stops_its_own_pool/1,
@@ -31,6 +32,7 @@ all() ->
         zero_config_scan,
         no_query_directories,
         aggregates_errors,
+        one_failing_query_does_not_change_another,
         refuses_to_overwrite,
         regenerates_deterministically,
         starts_and_stops_its_own_pool,
@@ -139,11 +141,13 @@ aggregates_errors(Config) ->
         [
             {
                 filename:join(Base, "src/gen_sql/Get-Order.sql"),
+                marmot,
                 {invalid_query_file_name, "Get-Order"}
             },
-            {filename:join(Base, "src/gen_sql/session.sql"), {non_dml_statement, ~"set"}},
+            {filename:join(Base, "src/gen_sql/session.sql"), marmot, {non_dml_statement, ~"set"}},
             {
                 filename:join(Base, "src/gen_sql/unaliased.sql"),
+                marmot,
                 {unaliased_expression_column, ~"?column?"}
             }
         ],
@@ -157,7 +161,7 @@ refuses_to_overwrite(Config) ->
     HandWritten = ~"-module(gen_sql).\n",
     ok = file:write_file(Output, HandWritten),
     ?assertEqual(
-        {error, [{Output, {refusing_to_overwrite, Output}}]},
+        {error, [{Output, generator, {refusing_to_overwrite, Output}}]},
         marmot:generate(#{
             directories => [filename:join(Base, "src/gen_sql")], pool => pool(Config)
         })
@@ -193,3 +197,23 @@ keeps_a_caller_owned_pool(Config) ->
     Pool = pool(Config),
     ok = marmot:generate(#{directories => [filename:join(Base, "src/gen_sql")], pool => Pool}),
     ?assert(is_pid(whereis(Pool))).
+
+one_failing_query_does_not_change_another(Config) ->
+    Alone = queries(Config, [{"alone/gen_sql/session.sql", ~"set search_path to public"}]),
+    {error, [AloneError]} = marmot:generate(#{
+        directories => [filename:join(Alone, "alone/gen_sql")], pool => pool(Config)
+    }),
+    Together = queries(Config, [
+        {"together/gen_sql/session.sql", ~"set search_path to public"},
+        {"together/gen_sql/unaliased.sql", ~"select id + 1 from gen_users"}
+    ]),
+    {error, Errors} = marmot:generate(#{
+        directories => [filename:join(Together, "together/gen_sql")], pool => pool(Config)
+    }),
+    ?assertEqual(2, length(Errors)),
+    {_AloneFile, AloneModule, AloneReason} = AloneError,
+    [{_File, Module, Reason}] = [
+        E
+     || {F, _, _} = E <- Errors, filename:basename(F) =:= "session.sql"
+    ],
+    ?assertEqual({AloneModule, AloneReason}, {Module, Reason}).

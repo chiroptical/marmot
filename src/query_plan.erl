@@ -22,7 +22,14 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
     check_version/1
 ]).
 
--export_type([join_type/0]).
+-export_type([join_type/0, reason/0]).
+
+-type reason() ::
+    invalid_json
+    | no_plan
+    | postgres_version_too_old
+    | {unexpected_plan_shape, term()}
+    | protocol:reason().
 
 -type join_type() :: full_join | left_join | right_join | inner_join | semi_join.
 
@@ -37,7 +44,7 @@ This is a port of squirrel's `query_plan` and `nullables_from_plan`.
 -doc """
 Given an untyped query, run the EXPLAIN PLAN and decode it.
 """.
--spec from_untyped_query(#config{}, #untyped_query{}) -> {ok, #plan{}} | {error, term()}.
+-spec from_untyped_query(#config{}, #untyped_query{}) -> {ok, #plan{}} | {error, reason()}.
 from_untyped_query(Config, #untyped_query{file_content = Content}) ->
     maybe
         {ok, Json} ?= protocol:explain(Config, <<?EXPLAIN_PREFIX/binary, Content/binary>>),
@@ -49,7 +56,7 @@ from_untyped_query(Config, #untyped_query{file_content = Content}) ->
 -doc """
 Given a JSON list of messages, decode the first message into a query plan.
 """.
--spec decode_plan(binary()) -> {ok, #plan{}} | {error, term()}.
+-spec decode_plan(binary()) -> {ok, #plan{}} | {error, reason()}.
 decode_plan(JsonBinary) ->
     try
         case json:decode(JsonBinary) of
@@ -160,7 +167,7 @@ outputs_index_map(Output) ->
 -doc """
 Ensure that the PostgreSQL version is compatible
 """.
--spec ensure_postgres_version(#config{}) -> ok | {error, term()}.
+-spec ensure_postgres_version(#config{}) -> ok | {error, reason()}.
 ensure_postgres_version(#config{pool = Pool}) ->
     case
         pgo:query(
