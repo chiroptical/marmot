@@ -34,6 +34,7 @@ TODO
     | {unaliased_expression_column, binary()}
     | {non_dml_statement, binary()}
     | {unsupported_type, binary() | pos_integer()}
+    | {empty_enum, binary()}
     | {nullability_lookup_failed, [{integer(), integer()}]}
     | query_plan:reason()
     | file:posix().
@@ -448,6 +449,8 @@ resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
             #{decode_opts => [return_rows_as_maps], pool => Pool}
         )
     of
+        #{command := select, rows := []} ->
+            {error, {empty_enum, Name}};
         #{command := select, rows := Rows} ->
             {ok, {enum, {Oid, Name, [L || #{~"enumlabel" := L} <- Rows]}}};
         _ ->
@@ -503,6 +506,15 @@ format_error({unsupported_type, Oid}) ->
         "its pool starts, so a type created after that is invisible to it; restart "
         "the pool, or cast the column to a type marmot supports.",
         [Oid]
+    );
+format_error({empty_enum, Name}) ->
+    marmot_error:message(
+        "the enum type ~ts has no variants, so there is no value marmot could "
+        "decode it to or encode it from. `create type ~ts as enum ()` is legal "
+        "Postgres but nothing can be stored in it. Give it variants with "
+        "`alter type ~ts add value 'some_label'`, or cast the column to a type "
+        "marmot supports.",
+        [Name, Name, Name]
     );
 format_error({nullability_lookup_failed, _Pairs}) ->
     marmot_error:message(

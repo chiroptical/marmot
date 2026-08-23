@@ -22,7 +22,6 @@
     array_column_decodes_list/1,
     wrongly_guessed_not_null_column_errors/1,
     utf8_sql_round_trips_exact_bytes/1,
-    enum_with_no_variants_is_rejected/1,
     reserved_words_as_identifiers/1
 ]).
 
@@ -36,7 +35,6 @@ all() ->
         array_column_decodes_list,
         wrongly_guessed_not_null_column_errors,
         utf8_sql_round_trips_exact_bytes,
-        enum_with_no_variants_is_rejected,
         reserved_words_as_identifiers
     ].
 
@@ -216,14 +214,6 @@ utf8_sql_round_trips_exact_bytes(_Config) ->
     {ok, _, Binary} = compile:forms(Forms, [return_errors]),
     {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
     ?assertEqual(Content, Module:cg_utf8_sql()).
-
-enum_with_no_variants_is_rejected(_Config) ->
-    {skip,
-        "`create type e as enum ()` is legal Postgres. codegen:enum_union_type/1 "
-        "then builds an empty union, codegen:forms/2 still answers {ok, Forms}, and "
-        "compile:forms/2 rejects them — so marmot:generate/1 writes an uncompilable "
-        "module into the caller's source tree. Should be {error, {empty_enum, Name}} "
-        "from codegen:validate/1, alongside the other three checks."}.
 
 reserved_words_as_identifiers(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),

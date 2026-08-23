@@ -50,6 +50,7 @@
     infer_types_simple/1,
     infer_types_left_join/1,
     infer_types_enum/1,
+    infer_types_empty_enum/1,
     infer_types_non_dml/1,
     infer_types_doc/1,
     infer_types_missing_table/1,
@@ -96,6 +97,7 @@ all() ->
         infer_types_simple,
         infer_types_left_join,
         infer_types_enum,
+        infer_types_empty_enum,
         infer_types_non_dml,
         infer_types_doc,
         infer_types_missing_table,
@@ -109,7 +111,7 @@ init_per_suite(Config) ->
     drop_tables(Pool),
     [
         pgo:query("drop type if exists " ++ atom_to_list(N), [], #{pool => Pool})
-     || N <- [mood, color, weird]
+     || N <- [mood, color, weird, empty_mood]
     ],
     drop_schemas(Pool),
     #{command := create} =
@@ -120,6 +122,8 @@ init_per_suite(Config) ->
         pgo:query("create type weird as enum ('a-b', 'not allowed', 'UPPER')", [], #{
             pool => Pool
         }),
+    #{command := create} =
+        pgo:query("create type empty_mood as enum ()", [], #{pool => Pool}),
     #{command := create} =
         pgo:query("create schema s_a", [], #{pool => Pool}),
     #{command := create} =
@@ -535,6 +539,13 @@ infer_types_enum(Config) ->
     ?assertMatch(
         [#field{identifier = m, type = {enum, {_, ~"mood", [~"happy", ~"sad", ~"meh"]}}}],
         TypedQuery#typed_query.returns
+    ).
+
+infer_types_empty_enum(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {error, {empty_enum, ~"empty_mood"}},
+        infer_types_for(MarmotConfig, ~"select $1::empty_mood as m")
     ).
 
 infer_types_non_dml(Config) ->
