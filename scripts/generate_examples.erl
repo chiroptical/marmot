@@ -13,8 +13,8 @@ main(_Args) ->
             halt(0);
         {error, Errors} ->
             [
-                io:format(standard_error, "~ts: ~ts~n", [File, generator:format_error(Reason)])
-             || {File, Reason} <- Errors
+                io:format(standard_error, "~ts: ~ts~n", [File, Module:format_error(Reason)])
+             || {File, Module, Reason} <- Errors
             ],
             halt(1)
     end.

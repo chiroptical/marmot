@@ -1,10 +1,19 @@
 -module(discovery).
 
+-behaviour(marmot_error).
+
 -export([
     query_directories/1,
     query_modules/1,
     format_error/1
 ]).
+
+-export_type([reason/0]).
+
+-type reason() ::
+    {missing_directory, file:filename_all()}
+    | {invalid_path_component, string(), string()}
+    | {duplicate_module, module(), [string()]}.
 
 -record #query_module{
     module :: module(),
@@ -14,7 +23,7 @@
 }.
 -export_record([query_module]).
 
--spec query_directories(file:filename_all()) -> {ok, [string()]} | {error, term()}.
+-spec query_directories(file:filename_all()) -> {ok, [string()]} | {error, reason()}.
 query_directories(Root0) ->
     Root = normalize(Root0),
     case filelib:is_dir(Root) of
@@ -29,7 +38,7 @@ query_directories(Root0) ->
             ]}
     end.
 
--spec query_modules([file:filename_all()]) -> {ok, [#query_module{}]} | {error, term()}.
+-spec query_modules([file:filename_all()]) -> {ok, [#query_module{}]} | {error, reason()}.
 query_modules(Directories) ->
     maybe
         {ok, PerDirectory} ?= collect([directory_modules(normalize(D)) || D <- Directories]),
@@ -38,42 +47,36 @@ query_modules(Directories) ->
         {ok, Modules}
     end.
 
--spec format_error(term()) -> binary().
+-spec format_error(reason()) -> binary().
 format_error({missing_directory, Directory}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "~ts is not a directory. marmot reads queries from a directory of .sql "
-            "files whose name becomes the generated module's name.",
-            [Directory]
-        )
+    marmot_error:message(
+        "~ts is not a directory. marmot reads queries from a directory of .sql "
+        "files whose name becomes the generated module's name.",
+        [Directory]
     );
 format_error({invalid_path_component, Component, Directory}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "the path component ~ts in ~ts cannot be part of an Erlang module name; "
-            "every component of a query directory's path becomes part of the "
-            "generated module's name, so each must start with a lowercase letter and "
-            "contain only lowercase letters, digits and underscores. Rename it.",
-            [Component, Directory]
-        )
+    marmot_error:message(
+        "the path component ~ts in ~ts cannot be part of an Erlang module name; "
+        "every component of a query directory's path becomes part of the "
+        "generated module's name, so each must start with a lowercase letter and "
+        "contain only lowercase letters, digits and underscores. Rename it.",
+        [Component, Directory]
     );
 format_error({duplicate_module, Module, Directories}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "~ts directories all generate the module ~ts: ~ts. Erlang's module "
-            "namespace is flat, so one would overwrite the other. Rename one of "
-            "them.",
-            [
-                integer_to_list(length(Directories)),
-                Module,
-                lists:join(", ", Directories)
-            ]
-        )
+    marmot_error:message(
+        "~ts directories all generate the module ~ts: ~ts. Erlang's module "
+        "namespace is flat, so one would overwrite the other. Rename one of "
+        "them.",
+        [
+            integer_to_list(length(Directories)),
+            Module,
+            lists:join(", ", Directories)
+        ]
     );
 format_error(Reason) ->
-    unicode:characters_to_binary(io_lib:format("~p", [Reason])).
+    marmot_error:message("~p", [Reason]).
 
--spec directory_modules(string()) -> {ok, [#query_module{}]} | {error, term()}.
+-spec directory_modules(string()) -> {ok, [#query_module{}]} | {error, reason()}.
 directory_modules(Directory) ->
     case filelib:is_dir(Directory) of
         false ->
@@ -85,7 +88,7 @@ directory_modules(Directory) ->
             end
     end.
 
--spec walk(string(), [string()], string()) -> {ok, [#query_module{}]} | {error, term()}.
+-spec walk(string(), [string()], string()) -> {ok, [#query_module{}]} | {error, reason()}.
 walk(Directory, Components, OutputDirectory) ->
     maybe
         ok ?= validate_component(filename:basename(Directory), Directory),
@@ -114,14 +117,14 @@ module_here(Directory, Components, OutputDirectory) ->
             ]
     end.
 
--spec validate_component(string(), string()) -> ok | {error, term()}.
+-spec validate_component(string(), string()) -> ok | {error, reason()}.
 validate_component(Component, Directory) ->
     case characters:is_valid_character_set(Component) of
         true -> ok;
         false -> {error, {invalid_path_component, Component, Directory}}
     end.
 
--spec check_duplicate_modules([#query_module{}]) -> ok | {error, term()}.
+-spec check_duplicate_modules([#query_module{}]) -> ok | {error, reason()}.
 check_duplicate_modules(Modules) ->
     ByModule = lists:foldl(
         fun(#query_module{module = Module, directory = Directory}, Acc) ->
@@ -178,7 +181,7 @@ is_hidden(Path) ->
         _ -> false
     end.
 
--spec normalize(file:filename_all()) -> string().
+-spec normalize(file:filename_all()) -> file:filename_all().
 normalize(Path) ->
     case filename:split(to_list(Path)) of
         [] -> ".";
@@ -194,7 +197,7 @@ to_list(Path) when is_binary(Path) ->
 to_list(Path) ->
     Path.
 
--spec collect([{ok, A} | {error, term()}]) -> {ok, [A]} | {error, term()}.
+-spec collect([{ok, A} | {error, E}]) -> {ok, [A]} | {error, E}.
 collect([]) ->
     {ok, []};
 collect([{ok, Value} | Rest]) ->

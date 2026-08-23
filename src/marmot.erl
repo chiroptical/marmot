@@ -3,6 +3,8 @@
 TODO
 """.
 
+-behaviour(marmot_error).
+
 -include_lib("pg_types/include/pg_types.hrl").
 -include_lib("pgo/src/pgo_internal.hrl").
 
@@ -24,7 +26,17 @@ TODO
     format_error/1
 ]).
 
--export_type([type/0, enum/0]).
+-export_type([type/0, enum/0, reason/0]).
+
+-type reason() ::
+    {invalid_query_file_name, file:filename_all()}
+    | {invalid_column, binary()}
+    | {unaliased_expression_column, binary()}
+    | {non_dml_statement, binary()}
+    | {unsupported_type, binary() | pos_integer()}
+    | {nullability_lookup_failed, [{integer(), integer()}]}
+    | query_plan:reason()
+    | file:posix().
 
 -record #untyped_query{
     input_file_name = "" :: string(),
@@ -83,7 +95,7 @@ The code assumes this is a semi-valid SQL file, i.e. it will attempt to separate
 full line comments from the query.
 """.
 -spec from_file(FileName :: string()) ->
-    {ok, UntypedQuery :: #untyped_query{}} | {error, Reason :: string()}.
+    {ok, UntypedQuery :: #untyped_query{}} | {error, reason()}.
 from_file(FileName) ->
     maybe
         {ok, Content} ?= file:read_file(FileName),
@@ -101,7 +113,7 @@ from_file(FileName) ->
         {error, Reason} -> {error, Reason}
     end.
 
--spec valid_root_name(file:filename_all()) -> ok | {error, term()}.
+-spec valid_root_name(file:filename_all()) -> ok | {error, reason()}.
 valid_root_name(RootName) ->
     case characters:is_valid_character_set(RootName) of
         true -> ok;
@@ -134,7 +146,7 @@ back to `pg_attribute.attnotnull` plus the `!`/`?` column-name suffixes
 rather than assuming every returned column is nullable.
 """.
 -spec infer_types(#config{}, #untyped_query{}) ->
-    {ok, #typed_query{}} | {error, term()}.
+    {ok, #typed_query{}} | {error, reason()}.
 infer_types(Config, UntypedQuery = #untyped_query{file_content = Content}) ->
     maybe
         {ok, ParamOids, Fields} ?= protocol:prepare_statement(Config, Content),
@@ -155,7 +167,7 @@ infer_types(Config, UntypedQuery = #untyped_query{file_content = Content}) ->
     end.
 
 -spec nullables(#config{}, #untyped_query{}) ->
-    {ok, sets:set(non_neg_integer())} | {error, term()}.
+    {ok, sets:set(non_neg_integer())} | {error, reason()}.
 nullables(Config, UntypedQuery) ->
     case query_plan:from_untyped_query(Config, UntypedQuery) of
         {ok, Plan} ->
@@ -194,7 +206,7 @@ Given a list of OIDs, resolve all of the OIDs to Erlang types. If we are unable
 to resolve any of the OIDs, the entire functions returns an error tuple.
 """.
 -spec resolve_parameters(#config{}, [pos_integer()]) ->
-    {ok, [type()]} | {error, term()}.
+    {ok, [type()]} | {error, reason()}.
 resolve_parameters(Config, Oids) ->
     collect([resolve_oid(Config, Oid) || Oid <- Oids]).
 
@@ -202,7 +214,7 @@ resolve_parameters(Config, Oids) ->
 
 """.
 -spec resolve_returns(#config{}, [#row_description_field{}], sets:set(non_neg_integer())) ->
-    {ok, [#field{}]} | {error, term()}.
+    {ok, [#field{}]} | {error, reason()}.
 resolve_returns(Config, Fields, Nullables) ->
     maybe
         {ok, NotNull} ?= nullability_map(Config, Fields),
@@ -218,7 +230,7 @@ resolve_returns(Config, Fields, Nullables) ->
 -spec resolve_return(
     #config{}, #row_description_field{}, non_neg_integer(), sets:set(non_neg_integer()), map()
 ) ->
-    {ok, #field{}} | {error, term()}.
+    {ok, #field{}} | {error, reason()}.
 resolve_return(Config, Field, Index, Nullables, NotNull) ->
     Name = iolist_to_binary(Field#row_description_field.name),
     maybe
@@ -269,7 +281,7 @@ is_nullable(Name, Index, Field, Nullables, NotNull) ->
 
 -doc """
 """.
--spec column_name_to_identifier(iodata()) -> {ok, atom()} | {error, term()}.
+-spec column_name_to_identifier(iodata()) -> {ok, atom()} | {error, reason()}.
 column_name_to_identifier(Name0) ->
     Name = iolist_to_binary(Name0),
     case Name of
@@ -320,7 +332,7 @@ order by t.ord
 -doc """
 """.
 -spec nullability_map(#config{}, [#row_description_field{}]) ->
-    {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
+    {ok, #{{integer(), integer()} => boolean() | null}} | {error, reason()}.
 nullability_map(Config, Fields) ->
     Pairs = lists:uniq([
         {TableOid, AttrNumber}
@@ -333,7 +345,7 @@ nullability_map(Config, Fields) ->
     end.
 
 -spec query_nullability(#config{}, [{integer(), integer()}]) ->
-    {ok, #{{integer(), integer()} => boolean() | null}} | {error, term()}.
+    {ok, #{{integer(), integer()} => boolean() | null}} | {error, reason()}.
 query_nullability(#config{pool = Pool}, Pairs) ->
     Relations = [Relation || {Relation, _} <- Pairs],
     Numbers = [Number || {_, Number} <- Pairs],
@@ -351,7 +363,7 @@ query_nullability(#config{pool = Pool}, Pairs) ->
     end.
 
 -spec resolve_oid(#config{}, pos_integer()) ->
-    {ok, type()} | {error, term()}.
+    {ok, type()} | {error, reason()}.
 resolve_oid(Config = #config{pool = Pool}, Oid) ->
     case pg_types:lookup_type_info(Pool, Oid) of
         unknown_oid -> {error, {unsupported_type, Oid}};
@@ -363,7 +375,7 @@ Postgres may send us arrays, enums, or names. This function dispatches to the
 appropriate handler for the recieved type information.
 """.
 -spec type_info_to_type(#config{}, #type_info{}) ->
-    {ok, type()} | {error, term()}.
+    {ok, type()} | {error, reason()}.
 type_info_to_type(Config, #type_info{module = pg_array} = Info) ->
     resolve_array(Config, Info);
 type_info_to_type(Config, #type_info{module = pg_enum} = Info) ->
@@ -377,7 +389,7 @@ we have that, we can recursively call `type_info_to_type` until we resolve the
 elements OID.
 """.
 -spec resolve_array(#config{}, #type_info{}) ->
-    {ok, type()} | {error, term()}.
+    {ok, type()} | {error, reason()}.
 resolve_array(Config = #config{pool = Pool}, Info) ->
     Elem =
         case Info#type_info.elem_type of
@@ -397,7 +409,7 @@ resolve_array(Config = #config{pool = Pool}, Info) ->
 -doc """
 Convert pg_type's names to Marmot's supported types
 """.
--spec name_to_type(binary()) -> {ok, type()} | {error, term()}.
+-spec name_to_type(binary()) -> {ok, type()} | {error, reason()}.
 name_to_type(~"int2") -> {ok, int};
 name_to_type(~"int4") -> {ok, int};
 name_to_type(~"int8") -> {ok, int};
@@ -428,7 +440,7 @@ name_to_type(Name) -> {error, {unsupported_type, Name}}.
 For enums, gather all the potential labels for the enum via pg_enum table
 """.
 -spec resolve_enum(#config{}, #type_info{}) ->
-    {ok, type()} | {error, term()}.
+    {ok, type()} | {error, reason()}.
 resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
     case
         pgo:query(
@@ -443,39 +455,84 @@ resolve_enum(#config{pool = Pool}, #type_info{oid = Oid, name = Name}) ->
             {error, {unsupported_type, Oid}}
     end.
 
--spec format_error(term()) -> binary().
+-spec format_error(reason()) -> binary().
 format_error({non_dml_statement, Keyword}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "this statement starts with ~ts, which Postgres's query planner "
-            "rejects with a 42601 syntax error under EXPLAIN even though it is "
-            "valid SQL; marmot only supports statements EXPLAIN can plan. Run "
-            "schema-changing or session statements like this through migrations "
-            "or `psql` instead. Note that `SET` on a pooled connection leaks "
-            "session state to whichever request borrows the connection next.",
-            [Keyword]
-        )
+    marmot_error:message(
+        "this statement starts with ~ts, which Postgres's query planner "
+        "rejects with a 42601 syntax error under EXPLAIN even though it is "
+        "valid SQL; marmot only supports statements EXPLAIN can plan. Run "
+        "schema-changing or session statements like this through migrations "
+        "or `psql` instead. Note that `SET` on a pooled connection leaks "
+        "session state to whichever request borrows the connection next.",
+        [Keyword]
     );
 format_error({invalid_query_file_name, RootName}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "the query file ~ts.sql cannot become an Erlang function name; a query "
-            "file's name must start with a lowercase letter and contain only "
-            "lowercase letters, digits and underscores. Rename it.",
-            [RootName]
-        )
+    marmot_error:message(
+        "the query file ~ts.sql cannot become an Erlang function name; a query "
+        "file's name must start with a lowercase letter and contain only "
+        "lowercase letters, digits and underscores. Rename it.",
+        [RootName]
     );
 format_error({unaliased_expression_column, Name}) ->
-    unicode:characters_to_binary(
-        io_lib:format(
-            "an output column named ~ts arrived from an unaliased expression; "
-            "Postgres does not give marmot a usable field name for it. Add an "
-            "alias in the query, e.g. `select u.id + 1 as total`.",
-            [Name]
-        )
+    marmot_error:message(
+        "an output column named ~ts arrived from an unaliased expression; "
+        "Postgres does not give marmot a usable field name for it. Add an "
+        "alias in the query, e.g. `select u.id + 1 as total`.",
+        [Name]
+    );
+format_error({prepare_failed, Fields}) ->
+    postgres_message(~"Postgres rejected this query", Fields);
+format_error({explain_failed, Fields}) ->
+    postgres_message(~"Postgres could not plan this query", Fields);
+format_error({invalid_column, Name}) ->
+    marmot_error:message(
+        "the output column ~ts cannot become an Erlang record field; a column name "
+        "must start with a lowercase letter and contain only lowercase letters, "
+        "digits and underscores. Alias it in the query, e.g. "
+        "`select \"Weird Name\" as weird_name`.",
+        [Name]
+    );
+format_error({unsupported_type, Name}) when is_binary(Name) ->
+    marmot_error:message(
+        "marmot has no Erlang type for the Postgres type ~ts. Cast the column to "
+        "a type marmot supports, e.g. `select my_col::text as my_col`.",
+        [Name]
+    );
+format_error({unsupported_type, Oid}) ->
+    marmot_error:message(
+        "marmot could not resolve Postgres type OID ~p. pgo learns type OIDs when "
+        "its pool starts, so a type created after that is invisible to it; restart "
+        "the pool, or cast the column to a type marmot supports.",
+        [Oid]
+    );
+format_error({nullability_lookup_failed, _Pairs}) ->
+    marmot_error:message(
+        "marmot could not read `pg_attribute.attnotnull` for this query's output "
+        "columns, so it cannot tell which of them are nullable. This usually means "
+        "the table changed between marmot describing the query and asking about it."
     );
 format_error(Reason) ->
-    unicode:characters_to_binary(io_lib:format("~p", [Reason])).
+    marmot_error:message("~p", [Reason]).
+
+-spec postgres_message(binary(), map()) -> binary().
+postgres_message(Preamble, Fields) ->
+    Code = maps:get(code, Fields, ~"unknown"),
+    Message = maps:get(message, Fields, ~"no message"),
+    Parts =
+        [io_lib:format("~ts (~ts): ~ts.", [Preamble, Code, Message])] ++
+            [
+                io_lib:format(" ~ts.", [D])
+             || D <- [maps:get(detail, Fields, undefined)], D =/= undefined
+            ] ++
+            [
+                io_lib:format(" Hint: ~ts.", [H])
+             || H <- [maps:get(hint, Fields, undefined)], H =/= undefined
+            ] ++
+            [
+                io_lib:format(" At character ~ts of the query.", [P])
+             || P <- [maps:get(position, Fields, undefined)], P =/= undefined
+            ],
+    marmot_error:message(Parts).
 
 -spec collect(list({ok, A} | {error, E})) ->
     {ok, list(A)} | {error, E}.

@@ -51,7 +51,10 @@
     infer_types_left_join/1,
     infer_types_enum/1,
     infer_types_non_dml/1,
-    infer_types_doc/1
+    infer_types_doc/1,
+    infer_types_missing_table/1,
+    infer_types_missing_column/1,
+    infer_types_missing_constraint/1
 ]).
 
 -define(BOGUS_OID, 999999999).
@@ -94,7 +97,10 @@ all() ->
         infer_types_left_join,
         infer_types_enum,
         infer_types_non_dml,
-        infer_types_doc
+        infer_types_doc,
+        infer_types_missing_table,
+        infer_types_missing_column,
+        infer_types_missing_constraint
     ].
 
 init_per_suite(Config) ->
@@ -546,3 +552,27 @@ infer_types_doc(Config) ->
     },
     {ok, TypedQuery} = marmot:infer_types(MarmotConfig, UntypedQuery),
     ?assertEqual([~"a comment"], TypedQuery#typed_query.doc).
+
+infer_types_missing_table(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertMatch(
+        {error, {prepare_failed, #{code := ~"42P01"}}},
+        infer_types_for(MarmotConfig, ~"select id from mr_nonexistent")
+    ).
+
+infer_types_missing_column(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertMatch(
+        {error, {prepare_failed, #{code := ~"42703"}}},
+        infer_types_for(MarmotConfig, ~"select nonexistent from mr_left")
+    ).
+
+infer_types_missing_constraint(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertMatch(
+        {error, {prepare_failed, #{code := ~"42704"}}},
+        infer_types_for(
+            MarmotConfig,
+            ~"insert into mr_left (id, tally) values ($1, $2) on conflict on constraint mr_nope do nothing"
+        )
+    ).

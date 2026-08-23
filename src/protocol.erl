@@ -8,6 +8,20 @@
 
 -import_record(marmot_config, [config]).
 
+-export_type([reason/0]).
+
+-type reason() ::
+    {prepare_failed, map()}
+    | {explain_failed, map()}
+    | {connection_desynced, term()}
+    | {unexpected_message, term()}
+    | {unsupported_socket, module(), term()}
+    | {type_server_bootstrap_timeout, pgo:pool()}
+    | closed
+    | {timeout, binary() | erlang:iovec()}
+    | inet:posix()
+    | binary().
+
 -export([
     prepare_pool/0,
     prepare_pool/1,
@@ -100,8 +114,9 @@ For example,
 {ok, [23], Fields} = protocol:prepare_statement(Config, ~"select $1::integer as num").
 ```
 """.
+-dialyzer({no_missing_return, [prepare_statement/2, explain/2]}).
 -spec prepare_statement(#config{}, binary()) ->
-    {ok, [oid()], [#row_description_field{}]} | {error, term()}.
+    {ok, [oid()], [#row_description_field{}]} | {error, reason()}.
 prepare_statement(#config{pool = Pool}, Statement) ->
     with_connection(Pool, fun(Conn) -> run_prepare_statement(Conn, Statement) end).
 
@@ -281,7 +296,7 @@ sent(ok) ->
 sent({error, Reason}) ->
     {error, {connection_desynced, Reason}}.
 
--spec explain(#config{}, binary()) -> {ok, JsonBinary :: binary()} | {error, term()}.
+-spec explain(#config{}, binary()) -> {ok, JsonBinary :: binary()} | {error, reason()}.
 explain(#config{pool = Pool}, Query) ->
     with_connection(Pool, fun(Conn) -> run_explain(Conn, Query) end).
 
