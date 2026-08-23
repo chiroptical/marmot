@@ -22,7 +22,8 @@
     array_column_decodes_list/1,
     wrongly_guessed_not_null_column_errors/1,
     utf8_sql_round_trips_exact_bytes/1,
-    enum_with_no_variants_is_rejected/1
+    enum_with_no_variants_is_rejected/1,
+    reserved_words_as_identifiers/1
 ]).
 
 all() ->
@@ -35,7 +36,8 @@ all() ->
         array_column_decodes_list,
         wrongly_guessed_not_null_column_errors,
         utf8_sql_round_trips_exact_bytes,
-        enum_with_no_variants_is_rejected
+        enum_with_no_variants_is_rejected,
+        reserved_words_as_identifiers
     ].
 
 init_per_suite(Config) ->
@@ -222,3 +224,19 @@ enum_with_no_variants_is_rejected(_Config) ->
         "compile:forms/2 rejects them — so marmot:generate/1 writes an uncompilable "
         "module into the caller's source tree. Should be {error, {empty_enum, Name}} "
         "from codegen:validate/1, alongside the other three checks."}.
+
+reserved_words_as_identifiers(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    Mod = generate_and_load(
+        MarmotConfig,
+        cg_reserved_sql,
+        "end",
+        ~"select id as \"end\", name as \"fun\" from cg_items where id = $1"
+    ),
+    {ok, 1, [Row]} = Mod:'end'(1),
+    ?assertEqual(1, records:get('end', Row)),
+    ?assertEqual({some, ~"one"}, records:get('fun', Row)),
+    ?assertEqual(
+        ~"select id as \"end\", name as \"fun\" from cg_items where id = $1",
+        Mod:end_sql()
+    ).

@@ -217,3 +217,6 @@ leading_comment_leading_blank_lines_test() ->
 
 leading_comment_strips_indentation_test() ->
     ?assertEqual([~"indented"], marmot:leading_comment(~"--   indented\nselect 1")).
+
+leading_comment_strips_trailing_whitespace_test() ->
+    ?assertEqual([~"a", ~"b"], marmot:leading_comment(~"-- a   \n--  b\t\nselect 1")).
