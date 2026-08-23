@@ -138,15 +138,15 @@ integer_types(Config) ->
         round_trip(Config, "c_int8", 9223372036854775807)
     ).
 
-oid_type(_Config) ->
-    {skip,
-        "marmot:name_to_type(~\"oid\") is unreachable. Postgres spells the "
-        "type's send function `oidsend`, but pg_oid:init/1 claims `idsend` "
-        "instead (pg_types/src/pg_oid.erl), so no module claims OID 26 and "
-        "pg_types:lookup_type_info/2 answers unknown_oid. marmot:resolve_oid/2 "
-        "fails with {unsupported_type, 26} before name_to_type/1 is ever "
-        "called. Should round-trip 4294967295 once pg_types is fixed or worked "
-        "around."}.
+oid_type(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {error, {unsupported_type, 26}},
+        marmot:infer_types(MarmotConfig, #untyped_query{
+            root_name = "rt_oid",
+            file_content = ~"select c_oid as v from rt_vals where id = $1"
+        })
+    ).
 
 floating_types(Config) ->
     ?assertEqual({some, 1.5}, round_trip(Config, "c_float4", 1.5)),

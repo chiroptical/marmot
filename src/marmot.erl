@@ -413,7 +413,6 @@ Convert pg_type's names to Marmot's supported types
 name_to_type(~"int2") -> {ok, int};
 name_to_type(~"int4") -> {ok, int};
 name_to_type(~"int8") -> {ok, int};
-name_to_type(~"oid") -> {ok, int};
 name_to_type(~"float4") -> {ok, float};
 name_to_type(~"float8") -> {ok, float};
 name_to_type(~"numeric") -> {ok, numeric};
