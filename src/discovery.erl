@@ -10,9 +10,14 @@
 
 -export_type([reason/0]).
 
+-define(MAX_ATOM_LENGTH, 255).
+-define(MAX_FILE_NAME_LENGTH, 255).
+-define(MAX_MODULE_NAME_LENGTH, min(?MAX_ATOM_LENGTH, ?MAX_FILE_NAME_LENGTH - length(".erl"))).
+
 -type reason() ::
     {missing_directory, file:filename_all()}
     | {invalid_path_component, string(), string()}
+    | {module_name_too_long, string()}
     | {duplicate_module, module(), [string()]}.
 
 -record #query_module{
@@ -62,6 +67,15 @@ format_error({invalid_path_component, Component, Directory}) ->
         "contain only lowercase letters, digits and underscores. Rename it.",
         [Component, Directory]
     );
+format_error({module_name_too_long, Name}) ->
+    marmot_error:message(
+        "the generated module name ~ts is ~ts characters long and marmot can "
+        "only use ~ts; the name becomes both an Erlang atom and the name of the "
+        ".erl file marmot writes. Every component of a query directory's path "
+        "becomes part of the generated module's name, so nesting deeply enough "
+        "overflows the limit. Shorten or flatten the directories.",
+        [Name, integer_to_list(length(Name)), integer_to_list(?MAX_MODULE_NAME_LENGTH)]
+    );
 format_error({duplicate_module, Module, Directories}) ->
     marmot_error:message(
         "~ts directories all generate the module ~ts: ~ts. Erlang's module "
@@ -92,29 +106,35 @@ directory_modules(Directory) ->
 walk(Directory, Components, OutputDirectory) ->
     maybe
         ok ?= validate_component(filename:basename(Directory), Directory),
+        {ok, Here} ?= module_here(Directory, Components, OutputDirectory),
         {ok, Nested} ?=
             collect([
                 walk(Sub, Components ++ [filename:basename(Sub)], OutputDirectory)
              || Sub <- subdirectories(Directory), contains_sql(Sub)
             ]),
-        {ok, module_here(Directory, Components, OutputDirectory) ++ lists:append(Nested)}
+        {ok, Here ++ lists:append(Nested)}
     end.
 
--spec module_here(string(), [string()], string()) -> [#query_module{}].
+-spec module_here(string(), [string()], string()) -> {ok, [#query_module{}]} | {error, reason()}.
 module_here(Directory, Components, OutputDirectory) ->
     case sql_files(Directory) of
         [] ->
-            [];
+            {ok, []};
         Files ->
             Name = lists:flatten(lists:join("_", Components)),
-            [
-                #query_module{
-                    module = list_to_atom(Name),
-                    directory = Directory,
-                    output_file = filename:join(OutputDirectory, Name ++ ".erl"),
-                    source_files = Files
-                }
-            ]
+            case length(Name) > ?MAX_MODULE_NAME_LENGTH of
+                true ->
+                    {error, {module_name_too_long, Name}};
+                false ->
+                    {ok, [
+                        #query_module{
+                            module = list_to_atom(Name),
+                            directory = Directory,
+                            output_file = filename:join(OutputDirectory, Name ++ ".erl"),
+                            source_files = Files
+                        }
+                    ]}
+            end
     end.
 
 -spec validate_component(string(), string()) -> ok | {error, reason()}.
