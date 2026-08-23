@@ -30,6 +30,14 @@
     returns_not_null_column/1,
     returns_nullable_column/1,
     returns_left_join_nullable/1,
+    returns_right_join_nullable/1,
+    returns_full_join_nullable/1,
+    returns_foreign_key_nullability/1,
+    returns_select_list_order/1,
+    returns_composite_rejected/1,
+    returns_cte/1,
+    returns_recursive_cte/1,
+    returns_cte_insert_returning/1,
     returns_suffix_overrides/1,
     returns_enum/1,
     returns_array/1,
@@ -65,6 +73,14 @@ all() ->
         returns_not_null_column,
         returns_nullable_column,
         returns_left_join_nullable,
+        returns_right_join_nullable,
+        returns_full_join_nullable,
+        returns_foreign_key_nullability,
+        returns_select_list_order,
+        returns_composite_rejected,
+        returns_cte,
+        returns_recursive_cte,
+        returns_cte_insert_returning,
         returns_suffix_overrides,
         returns_enum,
         returns_array,
@@ -116,6 +132,16 @@ init_per_suite(Config) ->
         ),
     #{command := create} =
         pgo:query("create table mr_right (id int not null, value text)", [], #{pool => Pool}),
+    #{command := create} =
+        pgo:query("create table mr_parent (id int not null primary key)", [], #{pool => Pool}),
+    #{command := create} =
+        pgo:query(
+            "create table mr_child (id int not null, "
+            "parent_id int not null references mr_parent (id), "
+            "maybe_parent_id int references mr_parent (id))",
+            [],
+            #{pool => Pool}
+        ),
     ok = query_plan:ensure_postgres_version(MarmotConfig),
     {module, marmot} = code:ensure_loaded(marmot),
     [{marmot_config, MarmotConfig} | Config].
@@ -130,7 +156,7 @@ end_per_suite(Config) ->
 drop_tables(Pool) ->
     [
         pgo:query("drop table if exists " ++ atom_to_list(N), [], #{pool => Pool})
-     || N <- [mr_left, mr_right]
+     || N <- [mr_left, mr_right, mr_child, mr_parent]
     ],
     ok.
 
@@ -274,6 +300,103 @@ returns_left_join_nullable(Config) ->
         ]},
         returns_with_plan(
             MarmotConfig, ~"select l.tally, r.id from mr_left l left join mr_right r on l.id = r.id"
+        )
+    ).
+
+returns_right_join_nullable(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = tally, type = {option, int}},
+            #field{identifier = id, type = int}
+        ]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"select l.tally, r.id from mr_left l right join mr_right r on l.id = r.id"
+        )
+    ).
+
+returns_full_join_nullable(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = tally, type = {option, int}},
+            #field{identifier = id, type = {option, int}}
+        ]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"select l.tally, r.id from mr_left l full join mr_right r on l.id = r.id"
+        )
+    ).
+
+returns_foreign_key_nullability(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = parent_id, type = int},
+            #field{identifier = maybe_parent_id, type = {option, int}}
+        ]},
+        returns_for(MarmotConfig, ~"select parent_id, maybe_parent_id from mr_child")
+    ),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = id, type = int},
+            #field{identifier = id, type = int}
+        ]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"select c.id, p.id from mr_child c join mr_parent p on c.parent_id = p.id"
+        )
+    ).
+
+returns_select_list_order(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = tally, type = int},
+            #field{identifier = name, type = {option, bit_array}},
+            #field{identifier = id, type = int}
+        ]},
+        returns_for(MarmotConfig, ~"select tally, name, id from mr_left")
+    ).
+
+returns_composite_rejected(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {error, {unsupported_type, ~"record"}},
+        returns_for(MarmotConfig, ~"select row(1, 2) as r")
+    ).
+
+returns_cte(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [
+            #field{identifier = id, type = int},
+            #field{identifier = name, type = {option, bit_array}}
+        ]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"with rows as (select id, name from mr_left) select id, name from rows"
+        )
+    ).
+
+returns_recursive_cte(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [#field{identifier = n, type = int, assumed_not_null = true}]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"with recursive counter(n) as (select 1 union all select n + 1 from counter where n < 3) select n from counter"
+        )
+    ).
+
+returns_cte_insert_returning(Config) ->
+    MarmotConfig = proplists:get_value(marmot_config, Config),
+    ?assertEqual(
+        {ok, [#field{identifier = id, type = int}]},
+        returns_with_plan(
+            MarmotConfig,
+            ~"with inserted as (insert into mr_right (id, value) values ($1, $2) returning id) select id from inserted"
         )
     ).
 
