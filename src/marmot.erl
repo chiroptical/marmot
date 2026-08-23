@@ -28,8 +28,12 @@ TODO
 
 -export_type([type/0, enum/0, reason/0]).
 
+-define(MAX_ATOM_LENGTH, 255).
+-define(MAX_ROOT_NAME_LENGTH, ?MAX_ATOM_LENGTH - length("decode__row")).
+
 -type reason() ::
     {invalid_query_file_name, file:filename_all()}
+    | {query_file_name_too_long, file:filename_all()}
     | {invalid_column, binary()}
     | {unaliased_expression_column, binary()}
     | {non_dml_statement, binary()}
@@ -117,8 +121,13 @@ from_file(FileName) ->
 -spec valid_root_name(file:filename_all()) -> ok | {error, reason()}.
 valid_root_name(RootName) ->
     case characters:is_valid_character_set(RootName) of
-        true -> ok;
-        false -> {error, {invalid_query_file_name, RootName}}
+        false ->
+            {error, {invalid_query_file_name, RootName}};
+        true ->
+            case string:length(RootName) > ?MAX_ROOT_NAME_LENGTH of
+                true -> {error, {query_file_name_too_long, RootName}};
+                false -> ok
+            end
     end.
 
 -spec leading_comment(binary()) -> [binary()].
@@ -474,6 +483,19 @@ format_error({invalid_query_file_name, RootName}) ->
         "file's name must start with a lowercase letter and contain only "
         "lowercase letters, digits and underscores. Rename it.",
         [RootName]
+    );
+format_error({query_file_name_too_long, RootName}) ->
+    marmot_error:message(
+        "the query file ~ts.sql has a ~ts character name and marmot can only "
+        "use ~ts; the name becomes an Erlang function name, and the "
+        "decode_..._row atom marmot derives alongside it would not fit Erlang's "
+        "~ts character atom limit. Rename it to something shorter.",
+        [
+            RootName,
+            integer_to_list(string:length(RootName)),
+            integer_to_list(?MAX_ROOT_NAME_LENGTH),
+            integer_to_list(?MAX_ATOM_LENGTH)
+        ]
     );
 format_error({unaliased_expression_column, Name}) ->
     marmot_error:message(

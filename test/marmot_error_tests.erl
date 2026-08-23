@@ -5,6 +5,7 @@
 authored_reasons(marmot) ->
     [
         {invalid_query_file_name, "Get-Order"},
+        {query_file_name_too_long, lists:duplicate(245, $a)},
         {invalid_column, ~"Weird Name"},
         {unaliased_expression_column, ~"?column?"},
         {non_dml_statement, ~"set"},
@@ -29,6 +30,7 @@ authored_reasons(discovery) ->
     [
         {missing_directory, "src/sql"},
         {invalid_path_component, "Admin", "src/sql/Admin"},
+        {module_name_too_long, lists:duplicate(256, $a)},
         {duplicate_module, sql_admin, ["a/sql/admin", "b/sql/admin"]}
     ];
 authored_reasons(generator) ->

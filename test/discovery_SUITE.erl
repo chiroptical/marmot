@@ -26,6 +26,7 @@
     query_directories_without_queries/1,
     query_directories_missing_root/1,
     invalid_query_file_name/1,
+    query_file_name_longer_than_an_atom/1,
     module_name_longer_than_an_atom/1
 ]).
 
@@ -44,6 +45,7 @@ all() ->
         query_directories_without_queries,
         query_directories_missing_root,
         invalid_query_file_name,
+        query_file_name_longer_than_an_atom,
         module_name_longer_than_an_atom
     ].
 
@@ -198,10 +200,36 @@ invalid_query_file_name(Config) ->
         marmot:from_file(directory(Base, "src/myapp_sql/Get-User.sql"))
     ).
 
-module_name_longer_than_an_atom(_Config) ->
-    {skip,
-        "Erlang atoms cap at 255 characters. discovery:module_here/3 joins a query "
-        "directory's path components with `_` and calls list_to_atom/1 on the result "
-        "with no length check, so a deep enough tree raises system_limit out of "
-        "discovery:query_modules/1 instead of returning an error marmot can report. "
-        "Should be {error, {module_name_too_long, Name}}."}.
+query_file_name_longer_than_an_atom(Config) ->
+    Longest = lists:duplicate(244, $a),
+    TooLong = lists:duplicate(245, $b),
+    Base = tree(Config, [
+        "src/myapp_sql/" ++ Longest ++ ".sql",
+        "src/myapp_sql/" ++ TooLong ++ ".sql"
+    ]),
+    ?assertMatch(
+        {ok, _},
+        marmot:from_file(directory(Base, "src/myapp_sql/" ++ Longest ++ ".sql"))
+    ),
+    ?assertEqual(
+        {error, {query_file_name_too_long, TooLong}},
+        marmot:from_file(directory(Base, "src/myapp_sql/" ++ TooLong ++ ".sql"))
+    ).
+
+module_name_longer_than_an_atom(Config) ->
+    LongestRoot = lists:duplicate(200, $a),
+    TooLongRoot = lists:duplicate(200, $b),
+    Longest = lists:duplicate(50, $c),
+    TooLong = lists:duplicate(51, $d),
+    Base = tree(Config, [
+        filename:join(["src", LongestRoot, Longest, "x.sql"]),
+        filename:join(["src", TooLongRoot, TooLong, "y.sql"])
+    ]),
+    ?assertMatch(
+        {ok, _},
+        discovery:query_modules([directory(Base, filename:join("src", LongestRoot))])
+    ),
+    ?assertEqual(
+        {error, {module_name_too_long, TooLongRoot ++ "_" ++ TooLong}},
+        discovery:query_modules([directory(Base, filename:join("src", TooLongRoot))])
+    ).
