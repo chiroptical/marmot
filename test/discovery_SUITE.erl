@@ -25,7 +25,8 @@
     query_directories_finds_roots/1,
     query_directories_without_queries/1,
     query_directories_missing_root/1,
-    invalid_query_file_name/1
+    invalid_query_file_name/1,
+    module_name_longer_than_an_atom/1
 ]).
 
 all() ->
@@ -42,7 +43,8 @@ all() ->
         query_directories_finds_roots,
         query_directories_without_queries,
         query_directories_missing_root,
-        invalid_query_file_name
+        invalid_query_file_name,
+        module_name_longer_than_an_atom
     ].
 
 init_per_suite(Config) ->
@@ -195,3 +197,11 @@ invalid_query_file_name(Config) ->
         {error, {invalid_query_file_name, "Get-User"}},
         marmot:from_file(directory(Base, "src/myapp_sql/Get-User.sql"))
     ).
+
+module_name_longer_than_an_atom(_Config) ->
+    {skip,
+        "Erlang atoms cap at 255 characters. discovery:module_here/3 joins a query "
+        "directory's path components with `_` and calls list_to_atom/1 on the result "
+        "with no length check, so a deep enough tree raises system_limit out of "
+        "discovery:query_modules/1 instead of returning an error marmot can report. "
+        "Should be {error, {module_name_too_long, Name}}."}.
