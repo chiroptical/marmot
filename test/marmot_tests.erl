@@ -16,7 +16,7 @@ name_int4_test() ->
 name_int8_test() ->
     ?assertEqual({ok, int}, marmot:name_to_type(~"int8")).
 name_oid_test() ->
-    ?assertEqual({ok, int}, marmot:name_to_type(~"oid")).
+    ?assertEqual({error, {unsupported_type, ~"oid"}}, marmot:name_to_type(~"oid")).
 name_float4_test() ->
     ?assertEqual({ok, float}, marmot:name_to_type(~"float4")).
 name_float8_test() ->
