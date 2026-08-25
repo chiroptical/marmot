@@ -35,15 +35,38 @@ authored_reasons(discovery) ->
     ];
 authored_reasons(generator) ->
     [
-        missing_connection,
         postgres_version_too_old,
-        {pool_start_failed, ~"Unable to start connection pool"},
         {refusing_to_overwrite, "src/sql.erl"},
         {unreadable_output_file, "src/sql.erl", eacces},
         {write_failed, "src/sql.erl", enospc}
+    ];
+authored_reasons(marmot_config) ->
+    [
+        {invalid_database_url, missing_database},
+        {missing_credentials, [database, user, password]},
+        {invalid_integer_env, "PGO_PORT", "five"},
+        {invalid_sslmode, "prefer"},
+        {invalid_ssl_root_cert, "/etc/ssl/rds.pem", no_certificates},
+        {invalid_ssl_root_cert, "/etc/ssl/rds.pem", enoent}
+    ];
+authored_reasons(protocol) ->
+    [
+        {pgo_application_start_failed, {pgo, bad_return}},
+        {connection_refused, "127.0.0.1", 5432},
+        {host_unreachable, "db.example.com", 5432, nxdomain},
+        {connect_timeout, "db.example.com", 5432, 5000},
+        {invalid_password, "marmot"},
+        {database_does_not_exist, "marmot"},
+        {tls_required, "db.example.com"},
+        {tls_not_supported, "127.0.0.1"},
+        {tls_handshake_failed, {tls_alert, {unknown_ca, "unknown ca"}}},
+        {connection_rejected, #{code => ~"53300", message => ~"too many connections"}},
+        {connection_rejected, #{}},
+        {connection_failed, econnreset},
+        {type_server_bootstrap_timeout, marmot}
     ].
 
--define(MODULES, [marmot, codegen, discovery, generator]).
+-define(MODULES, [marmot, codegen, discovery, generator, marmot_config, protocol]).
 
 every_authored_reason_has_a_message_test_() ->
     [

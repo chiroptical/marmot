@@ -14,15 +14,14 @@
     directories => [file:filename_all()],
     search_root => file:filename_all(),
     pool => pgo:pool(),
-    connection => pgo:pool_config()
+    connection => marmot_config:connection(),
+    connect_timeout => timeout()
 }.
 
 -type error() :: marmot_error:error().
 
 -type reason() ::
-    missing_connection
-    | {pool_start_failed, protocol:reason()}
-    | {refusing_to_overwrite, string()}
+    {refusing_to_overwrite, string()}
     | {unreadable_output_file, string(), file:posix()}
     | {write_failed, string(), file:posix()}
     | query_plan:reason().
@@ -43,23 +42,11 @@ generate(Config) ->
     end.
 
 -spec format_error(reason()) -> binary().
-format_error(missing_connection) ->
-    marmot_error:message(
-        "marmot needs a database to infer types from. Pass `connection => "
-        "#{database => ..., user => ..., password => ...}` to have marmot start "
-        "its own pool, or `pool => Name` to use a pgo pool you started yourself."
-    );
 format_error(postgres_version_too_old) ->
     marmot_error:message(
         "marmot needs PostgreSQL 16 or newer. Nullability is inferred from "
         "`EXPLAIN (GENERIC_PLAN)`, which older servers do not support, and without "
         "it marmot cannot tell an always-present column from a nullable one."
-    );
-format_error({pool_start_failed, Reason}) ->
-    marmot_error:message(
-        "marmot could not start or reach its connection pool: ~p. Check the "
-        "host, port and credentials it was given.",
-        [Reason]
     );
 format_error({refusing_to_overwrite, Output}) ->
     marmot_error:message(
@@ -82,14 +69,24 @@ format_error(Reason) ->
     marmot_error:message("~p", [Reason]).
 
 -spec marmot_config(config()) -> {ok, #config{}} | {error, [error()]}.
-marmot_config(#{pool := Pool, connection := Connection}) ->
-    {ok, marmot_config:new(Pool, {some, Connection})};
-marmot_config(#{pool := Pool}) ->
-    {ok, marmot_config:new(Pool, none)};
-marmot_config(#{connection := Connection}) ->
-    {ok, marmot_config:new(marmot, {some, Connection})};
+marmot_config(#{pool := Pool, connection := Connection} = Config) ->
+    {ok, connect_timeout(marmot_config:new(Pool, {some, Connection}), Config)};
+marmot_config(#{pool := Pool} = Config) ->
+    {ok, connect_timeout(marmot_config:new(Pool, none), Config)};
+marmot_config(#{connection := Connection} = Config) ->
+    {ok, connect_timeout(marmot_config:new(marmot, {some, Connection}), Config)};
 marmot_config(#{}) ->
-    {error, [{config, ?MODULE, missing_connection}]}.
+    case marmot_config:from_env() of
+        {ok, MarmotConfig} -> {ok, MarmotConfig};
+        {error, Reason} -> {error, [{config, marmot_config, Reason}]}
+    end.
+
+-spec connect_timeout(#config{}, config()) -> #config{}.
+connect_timeout(MarmotConfig, Config) ->
+    case maps:find(connect_timeout, Config) of
+        {ok, ConnectTimeout} -> MarmotConfig#config{connect_timeout = ConnectTimeout};
+        error -> MarmotConfig
+    end.
 
 -spec directories(config()) -> {ok, [file:filename_all()]} | {error, [error()]}.
 directories(#{directories := Directories}) ->
@@ -128,7 +125,7 @@ with_pool(MarmotConfig = #config{pool = Pool}, Fun) ->
                 end
             end;
         {error, Reason} ->
-            {error, [{config, ?MODULE, {pool_start_failed, Reason}}]}
+            {error, [{config, protocol, Reason}]}
     end.
 
 -spec owned(#config{}) -> boolean().

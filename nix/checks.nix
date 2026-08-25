@@ -106,6 +106,12 @@ in
     PGDATABASE = "marmot";
     postgresqlTestUserOptions = "LOGIN PASSWORD 'marmot' SUPERUSER";
 
+    postgresqlTestSetupPost = ''
+      sed 's/^\(host.*\)trust$/\1scram-sha-256/' "$PGDATA/pg_hba.conf" >"$PGDATA/pg_hba.conf.scram"
+      mv "$PGDATA/pg_hba.conf.scram" "$PGDATA/pg_hba.conf"
+      pg_ctl reload
+    '';
+
     PGO_HOST = "127.0.0.1";
     PGO_PORT = "5432";
     PGO_USER = "marmot";

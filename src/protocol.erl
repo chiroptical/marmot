@@ -6,6 +6,8 @@
 -include_lib("pgo/src/pgo_internal.hrl").
 -include_lib("ssl/src/ssl_api.hrl").
 
+-behaviour(marmot_error).
+
 -import_record(marmot_config, [config]).
 
 -export_type([reason/0]).
@@ -17,6 +19,17 @@
     | {unexpected_message, term()}
     | {unsupported_socket, module(), term()}
     | {type_server_bootstrap_timeout, pgo:pool()}
+    | {pgo_application_start_failed, term()}
+    | {connection_refused, string(), integer()}
+    | {host_unreachable, string(), integer(), inet:posix()}
+    | {connect_timeout, string(), integer(), timeout()}
+    | {invalid_password, string()}
+    | {database_does_not_exist, string()}
+    | {tls_required, string()}
+    | {tls_not_supported, string()}
+    | {tls_handshake_failed, term()}
+    | {connection_rejected, map()}
+    | {connection_failed, term()}
     | closed
     | {timeout, binary() | erlang:iovec()}
     | inet:posix()
@@ -27,55 +40,217 @@
     prepare_pool/1,
     await_types/1,
     prepare_statement/2,
-    explain/2
+    explain/2,
+    format_error/1
 ]).
 
 -ifdef(TEST).
--export([set_active/2, with_connection/2, checkout_reason/2]).
+-export([set_active/2, with_connection/2, checkout_reason/2, connect_error/2]).
 -endif.
 
 -doc """
 Start marmot's pgo connection pool from environment variables. Equivalent to
 `prepare_pool(marmot_config:from_env())`. See `marmot_config:from_env/0` for
-the environment variables read and their defaults.
+the environment variables read.
 """.
--spec prepare_pool() -> ok | {error, term()}.
+-spec prepare_pool() -> ok | {error, reason() | marmot_config:reason()}.
 prepare_pool() ->
-    prepare_pool(marmot_config:from_env()).
+    maybe
+        {ok, Config} ?= marmot_config:from_env(),
+        prepare_pool(Config)
+    end.
 
 -doc """
 Start (or attach to) marmot's pgo connection pool per `Config`.
 
-- `connection = {some, C}`: start `application:ensure_all_started(pgo)` then
-  `pgo:start_pool(Pool, C)`. A pool already started under this name is treated
-  as success.
+- `connection = {some, C}`: start `application:ensure_all_started(pgo)`, probe
+  the connection once so a failure is reported rather than retried in the
+  background, then `pgo:start_pool(Pool, C)`. A pool already started under this
+  name is treated as success.
 - `connection = none`: the caller already started `Pool`; skip startup.
 
 Either way, waits for `pg_types`' asynchronous type server bootstrap to finish
 before returning.
 """.
--spec prepare_pool(#config{}) -> ok | {error, term()}.
-prepare_pool(#config{pool = Pool, connection = {some, Connection}}) ->
+-spec prepare_pool(#config{}) -> ok | {error, reason()}.
+prepare_pool(#config{
+    pool = Pool, connection = {some, Connection}, connect_timeout = ConnectTimeout
+}) ->
     maybe
-        {ok, _Started} ?= application:ensure_all_started(pgo),
+        ok ?= start_pgo(),
+        ok ?= probe(Pool, Connection, ConnectTimeout),
         ok ?= start_pool(Pool, Connection),
         await_types(Pool)
-    else
-        {error, Reason} ->
-            logger:notice("unable to start connection pool: ~p", [Reason]),
-            {error, ~"Unable to start connection pool"}
     end;
 prepare_pool(#config{connection = none, pool = Pool}) ->
     await_types(Pool).
 
+-spec start_pgo() -> ok | {error, reason()}.
+start_pgo() ->
+    case application:ensure_all_started(pgo) of
+        {ok, _Started} -> ok;
+        {error, Reason} -> {error, {pgo_application_start_failed, Reason}}
+    end.
+
 -dialyzer({nowarn_function, start_pool/2}).
--spec start_pool(pgo:pool(), pgo:pool_config()) -> ok | {error, term()}.
+-spec start_pool(pgo:pool(), marmot_config:connection()) -> ok | {error, term()}.
 start_pool(Pool, Connection) ->
     case pgo:start_pool(Pool, Connection) of
         {ok, _Pid} -> ok;
         {error, {already_started, _Pid}} -> ok;
         {error, _} = Error -> Error
     end.
+
+-spec probe(pgo:pool(), marmot_config:connection(), timeout()) -> ok | {error, reason()}.
+probe(Pool, Connection, ConnectTimeout) ->
+    case open_probe(Pool, Connection, ConnectTimeout) of
+        ok ->
+            ok;
+        {error, probe_deadline} ->
+            {error, {connect_timeout, host(Connection), port(Connection), ConnectTimeout}};
+        {error, Reason} ->
+            {error, connect_error(Connection, Reason)}
+    end.
+
+-spec open_probe(pgo:pool(), marmot_config:connection(), timeout()) -> ok | {error, term()}.
+open_probe(Pool, Connection, ConnectTimeout) ->
+    Parent = self(),
+    {Pid, Monitor} = spawn_monitor(fun() ->
+        Parent ! {probe, self(), open_connection(Pool, Connection)}
+    end),
+    receive
+        {probe, Pid, Result} ->
+            erlang:demonitor(Monitor, [flush]),
+            Result;
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            {error, {probe_crashed, Reason}}
+    after ConnectTimeout ->
+        erlang:demonitor(Monitor, [flush]),
+        exit(Pid, kill),
+        {error, probe_deadline}
+    end.
+
+-spec open_connection(pgo:pool(), marmot_config:connection()) -> ok | {error, term()}.
+open_connection(Pool, Connection) ->
+    case pgo_handler:open(Pool, Connection) of
+        {ok, Conn} ->
+            _ = pgo_handler:close(Conn),
+            ok;
+        {error, _} = Error ->
+            Error
+    end.
+
+-spec connect_error(marmot_config:connection(), term()) -> reason().
+connect_error(Connection, {pgo_error, #{code := ~"28P01"}}) ->
+    {invalid_password, maps:get(user, Connection, "")};
+connect_error(Connection, {pgo_error, #{code := ~"3D000"}}) ->
+    {database_does_not_exist, maps:get(database, Connection, "")};
+connect_error(Connection, {pgo_error, #{code := ~"28000", message := Message} = Fields}) ->
+    case binary:match(Message, ~"SSL off") of
+        nomatch -> {connection_rejected, Fields};
+        _ -> {tls_required, host(Connection)}
+    end;
+connect_error(_Connection, {pgo_error, Fields}) ->
+    {connection_rejected, Fields};
+connect_error(Connection, econnrefused) ->
+    {connection_refused, host(Connection), port(Connection)};
+connect_error(Connection, Posix) when
+    Posix =:= ehostunreach; Posix =:= enetunreach; Posix =:= nxdomain; Posix =:= etimedout
+->
+    {host_unreachable, host(Connection), port(Connection), Posix};
+connect_error(Connection, ssl_refused) ->
+    {tls_not_supported, host(Connection)};
+connect_error(_Connection, Reason) when
+    is_tuple(Reason), element(1, Reason) =:= tls_alert orelse element(1, Reason) =:= options
+->
+    {tls_handshake_failed, Reason};
+connect_error(_Connection, {probe_crashed, Reason}) ->
+    {connection_failed, Reason};
+connect_error(_Connection, Reason) ->
+    {connection_failed, Reason}.
+
+-spec host(marmot_config:connection()) -> string().
+host(Connection) ->
+    maps:get(host, Connection, "127.0.0.1").
+
+-spec port(marmot_config:connection()) -> integer().
+port(Connection) ->
+    maps:get(port, Connection, 5432).
+
+-spec format_error(reason()) -> binary().
+format_error({pgo_application_start_failed, Reason}) ->
+    marmot_error:message(
+        "the pgo application would not start: ~p. marmot cannot talk to "
+        "PostgreSQL without it.",
+        [Reason]
+    );
+format_error({connection_refused, Host, Port}) ->
+    marmot_error:message(
+        "nothing is listening on ~ts:~p. Check the host and port, and that the "
+        "server is running.",
+        [Host, Port]
+    );
+format_error({host_unreachable, Host, Port, Posix}) ->
+    marmot_error:message(
+        "~ts:~p could not be reached: ~p. Check the host name and that the "
+        "network allows the connection.",
+        [Host, Port, Posix]
+    );
+format_error({connect_timeout, Host, Port, ConnectTimeout}) ->
+    marmot_error:message(
+        "~ts:~p accepted a connection but did not finish the PostgreSQL "
+        "handshake within ~pms. A firewall or proxy in front of the database "
+        "usually causes this. Raise PGO_CONNECT_TIMEOUT if the server is only "
+        "slow.",
+        [Host, Port, ConnectTimeout]
+    );
+format_error({invalid_password, User}) ->
+    marmot_error:message(
+        "PostgreSQL rejected the password for ~ts. Fix PGO_PASSWORD, or the "
+        "password in DATABASE_URL.",
+        [User]
+    );
+format_error({database_does_not_exist, Database}) ->
+    marmot_error:message(
+        "PostgreSQL has no database named ~ts. Create it, or fix PGO_DATABASE "
+        "or the path in DATABASE_URL.",
+        [Database]
+    );
+format_error({tls_required, Host}) ->
+    marmot_error:message(
+        "~ts refuses connections without TLS. Set PGO_SSLMODE to `verify-full`, "
+        "or add `?sslmode=verify-full` to DATABASE_URL.",
+        [Host]
+    );
+format_error({tls_not_supported, Host}) ->
+    marmot_error:message(
+        "TLS was requested but ~ts does not offer it. Set PGO_SSLMODE to "
+        "`disable` if the connection does not need it.",
+        [Host]
+    );
+format_error({tls_handshake_failed, Reason}) ->
+    marmot_error:message(
+        "the TLS handshake failed: ~p. For a server with a private CA, point "
+        "PGO_SSLROOTCERT at its bundle.",
+        [Reason]
+    );
+format_error({connection_rejected, #{message := Message, code := Code}}) ->
+    marmot_error:message(
+        "PostgreSQL refused the connection: ~ts (SQLSTATE ~ts).", [Message, Code]
+    );
+format_error({connection_rejected, Fields}) ->
+    marmot_error:message("PostgreSQL refused the connection: ~p.", [Fields]);
+format_error({connection_failed, Reason}) ->
+    marmot_error:message("marmot could not connect: ~p.", [Reason]);
+format_error({type_server_bootstrap_timeout, Pool}) ->
+    marmot_error:message(
+        "pool ~p connected but its pg_types type server never finished loading "
+        "the type catalogue. The database may be under load, or the role may "
+        "not be able to read pg_type.",
+        [Pool]
+    );
+format_error(Reason) ->
+    marmot_error:message("~p", [Reason]).
 
 -define(TYPE_WAIT_ATTEMPTS, 500).
 -define(TYPE_WAIT_SLEEP_MS, 10).

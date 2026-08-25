@@ -25,10 +25,11 @@ psql "postgres://marmot:marmot@127.0.0.1:5432/marmot" -f examples/schema.sql
 make examples
 ```
 
-`make examples` reads `PGO_HOST`, `PGO_DATABASE`, `PGO_USER`, `PGO_PASSWORD` and
-`PGO_PORT`, defaulting to the local `marmot` database marmot's own tests use. It
-rewrites `sql.erl` in place; regenerating without a schema change produces
-byte-identical output.
+`make examples` reads `DATABASE_URL`, or `PGO_HOST` and `PGO_PORT` (defaulting to
+`127.0.0.1:5432`) with `PGO_DATABASE`, `PGO_USER` and `PGO_PASSWORD`, which have
+no defaults. The nix devshell exports the local `marmot` database marmot's own
+tests use. It rewrites `sql.erl` in place; regenerating without a schema change
+produces byte-identical output.
 
 Apply `schema.sql` first every time. `make test` creates these tables and drops
 them again when it finishes, like every other suite's fixtures, so a regeneration

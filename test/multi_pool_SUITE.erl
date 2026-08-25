@@ -24,7 +24,7 @@ all() ->
     [concurrent_inference].
 
 init_per_suite(Config) ->
-    Base = marmot_config:from_env(),
+    {ok, Base} = marmot_config:from_env(),
     Connection = Base#config.connection,
     MarmotConfigA = #config{pool = marmot_a, connection = Connection},
     MarmotConfigB = #config{pool = marmot_b, connection = Connection},

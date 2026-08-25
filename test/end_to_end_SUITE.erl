@@ -32,7 +32,7 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    Base = marmot_config:from_env(),
+    {ok, Base} = marmot_config:from_env(),
     MarmotConfig = #config{pool = Pool} = Base#config{pool = default},
     ok = protocol:prepare_pool(MarmotConfig),
     ok = query_plan:ensure_postgres_version(MarmotConfig),
@@ -63,9 +63,13 @@ examples_dir() ->
     filename:join(filename:dirname(filename:dirname(?FILE)), "examples").
 
 -spec start_maps_pool(#config{}) -> ok.
-start_maps_pool(#config{connection = {some, Connection}}) ->
+start_maps_pool(#config{connection = {some, Connection}, connect_timeout = ConnectTimeout}) ->
     protocol:prepare_pool(
-        marmot_config:new(?MAPS_POOL, {some, Connection#{decode_opts => [return_rows_as_maps]}})
+        marmot_config:new(
+            ?MAPS_POOL,
+            {some, Connection#{decode_opts => [return_rows_as_maps]}},
+            ConnectTimeout
+        )
     ).
 
 -spec apply_schema(pgo:pool(), string()) -> ok.
