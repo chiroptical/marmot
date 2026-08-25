@@ -29,7 +29,8 @@ the caller has already started `Pool` and marmot only uses it.
 }.
 
 -type reason() ::
-    {missing_credentials, [database | user | password]}
+    {invalid_database_url, term()}
+    | {missing_credentials, [database | user | password]}
     | {invalid_integer_env, string(), string()}.
 
 -record #config{
@@ -43,7 +44,7 @@ new(Pool, Connection) ->
     #config{pool = Pool, connection = Connection}.
 
 -doc """
-Build a `#config{}` from `PGO_*` environment variables. See
+Build a `#config{}` from `DATABASE_URL`, or from `PGO_*` when it is unset. See
 `connection_from_env/0`.
 """.
 -spec from_env() -> {ok, #config{}} | {error, reason()}.
@@ -54,24 +55,31 @@ from_env() ->
     end.
 
 -doc """
-`PGO_HOST` (default `"127.0.0.1"`), `PGO_PORT` (default `5432`),
-`PGO_DATABASE`, `PGO_USER`, `PGO_PASSWORD` and `PGO_POOL_SIZE` (default `1`).
-The three credentials have no default.
+`DATABASE_URL` when set, otherwise `PGO_HOST` (default `"127.0.0.1"`),
+`PGO_PORT` (default `5432`), `PGO_DATABASE`, `PGO_USER` and `PGO_PASSWORD`.
+
+`PGO_POOL_SIZE` has no URL representation and is read either way.
 """.
 -spec connection_from_env() -> {ok, connection()} | {error, reason()}.
 connection_from_env() ->
     maybe
-        {ok, Base} ?= base_from_variables(),
+        {ok, Base} ?= base_from_env(),
         {ok, PoolSize} ?= integer_env("PGO_POOL_SIZE", ?DEFAULT_POOL_SIZE),
         {ok, Base#{pool_size => PoolSize}}
     end.
 
 -spec format_error(reason()) -> binary().
+format_error({invalid_database_url, Reason}) ->
+    marmot_error:message(
+        "DATABASE_URL could not be read: ~p. marmot expects "
+        "`postgres://user:password@host:port/database`.",
+        [Reason]
+    );
 format_error({missing_credentials, Missing}) ->
     marmot_error:message(
-        "marmot was given no ~ts to connect with. Set PGO_DATABASE, PGO_USER "
-        "and PGO_PASSWORD, or pass `connection => #{database => ..., user => "
-        "..., password => ...}` to `marmot:generate/1`.",
+        "marmot was given no ~ts to connect with. Set DATABASE_URL, or set "
+        "PGO_DATABASE, PGO_USER and PGO_PASSWORD, or pass `connection => "
+        "#{database => ..., user => ..., password => ...}` to `marmot:generate/1`.",
         [conjoin([atom_to_list(Key) || Key <- Missing])]
     );
 format_error({invalid_integer_env, Variable, Value}) ->
@@ -85,6 +93,13 @@ format_error(Reason) ->
 conjoin([Only]) -> Only;
 conjoin([First, Last]) -> First ++ " or " ++ Last;
 conjoin([First | Rest]) -> First ++ ", " ++ conjoin(Rest).
+
+-spec base_from_env() -> {ok, connection()} | {error, reason()}.
+base_from_env() ->
+    case os:getenv("DATABASE_URL") of
+        false -> base_from_variables();
+        Url -> base_from_url(Url)
+    end.
 
 -spec base_from_variables() -> {ok, connection()} | {error, reason()}.
 base_from_variables() ->
@@ -105,6 +120,62 @@ base_from_variables() ->
             end;
         Missing ->
             {error, {missing_credentials, Missing}}
+    end.
+
+-spec base_from_url(string()) -> {ok, connection()} | {error, reason()}.
+base_from_url(Url) ->
+    case uri_string:parse(Url) of
+        #{scheme := Scheme} = Parts when Scheme =:= "postgres"; Scheme =:= "postgresql" ->
+            base_from_url_parts(Parts);
+        #{} ->
+            {error, {invalid_database_url, unsupported_scheme}};
+        {error, Reason, _Term} ->
+            {error, {invalid_database_url, Reason}}
+    end.
+
+-spec base_from_url_parts(uri_string:uri_map()) -> {ok, connection()} | {error, reason()}.
+base_from_url_parts(Parts) ->
+    maybe
+        {ok, Host} ?= url_host(Parts),
+        {ok, Database} ?= url_database(Parts),
+        {ok, User, Password} ?= url_userinfo(Parts),
+        {ok, #{
+            host => Host,
+            port => maps:get(port, Parts, ?DEFAULT_PORT),
+            database => Database,
+            user => User,
+            password => Password
+        }}
+    end.
+
+-spec url_host(uri_string:uri_map()) -> {ok, string()} | {error, reason()}.
+url_host(#{host := Host}) when Host =/= "" -> {ok, Host};
+url_host(#{}) -> {error, {invalid_database_url, missing_host}}.
+
+-spec url_database(uri_string:uri_map()) -> {ok, string()} | {error, reason()}.
+url_database(#{path := [$/ | Path]}) when Path =/= "" -> percent_decode(Path);
+url_database(#{}) -> {error, {invalid_database_url, missing_database}}.
+
+-spec url_userinfo(uri_string:uri_map()) -> {ok, string(), string()} | {error, reason()}.
+url_userinfo(#{userinfo := UserInfo}) ->
+    case string:split(UserInfo, ":") of
+        [User, Password] when User =/= "" ->
+            maybe
+                {ok, DecodedUser} ?= percent_decode(User),
+                {ok, DecodedPassword} ?= percent_decode(Password),
+                {ok, DecodedUser, DecodedPassword}
+            end;
+        _ ->
+            {error, {invalid_database_url, missing_password}}
+    end;
+url_userinfo(#{}) ->
+    {error, {invalid_database_url, missing_user}}.
+
+-spec percent_decode(string()) -> {ok, string()} | {error, reason()}.
+percent_decode(Encoded) ->
+    case uri_string:percent_decode(Encoded) of
+        Decoded when is_list(Decoded) -> {ok, Decoded};
+        {error, Reason, _Term} -> {error, {invalid_database_url, Reason}}
     end.
 
 -spec integer_env(string(), integer()) -> {ok, integer()} | {error, reason()}.

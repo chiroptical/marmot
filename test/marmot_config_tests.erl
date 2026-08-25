@@ -5,6 +5,7 @@
 -import_record(marmot_config, [config]).
 
 -define(VARIABLES, [
+    "DATABASE_URL",
     "PGO_HOST",
     "PGO_PORT",
     "PGO_DATABASE",
@@ -38,6 +39,53 @@ clear() ->
 connection(Variables) ->
     with_env(Variables, fun marmot_config:connection_from_env/0).
 
+url_test() ->
+    ?assertEqual(
+        {ok, #{
+            host => "db.example.com",
+            port => 6543,
+            database => "app",
+            user => "reader",
+            password => "hunter2",
+            pool_size => 1
+        }},
+        connection([{"DATABASE_URL", "postgres://reader:hunter2@db.example.com:6543/app"}])
+    ).
+
+url_defaults_the_port_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgresql://u:p@h/app"}]),
+    ?assertEqual(5432, maps:get(port, Connection)).
+
+url_percent_decodes_userinfo_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://user%2Bro:p%40ss@h/app%20one"}]),
+    ?assertEqual("user+ro", maps:get(user, Connection)),
+    ?assertEqual("p@ss", maps:get(password, Connection)),
+    ?assertEqual("app one", maps:get(database, Connection)).
+
+url_rejects_other_schemes_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, unsupported_scheme}},
+        connection([{"DATABASE_URL", "mysql://u:p@h/app"}])
+    ).
+
+url_without_a_database_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, missing_database}},
+        connection([{"DATABASE_URL", "postgres://u:p@h"}])
+    ).
+
+url_without_a_password_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, missing_password}},
+        connection([{"DATABASE_URL", "postgres://u@h/app"}])
+    ).
+
+url_without_userinfo_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, missing_user}},
+        connection([{"DATABASE_URL", "postgres://h/app"}])
+    ).
+
 variables_test() ->
     ?assertEqual(
         {ok, #{
@@ -50,6 +98,11 @@ variables_test() ->
         }},
         connection(?LOCAL)
     ).
+
+database_url_wins_over_variables_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@elsewhere/other"} | ?LOCAL]),
+    ?assertEqual("elsewhere", maps:get(host, Connection)),
+    ?assertEqual("other", maps:get(database, Connection)).
 
 missing_every_credential_test() ->
     ?assertEqual(
