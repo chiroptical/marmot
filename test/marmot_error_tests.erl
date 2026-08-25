@@ -36,7 +36,6 @@ authored_reasons(discovery) ->
 authored_reasons(generator) ->
     [
         postgres_version_too_old,
-        {pool_start_failed, ~"Unable to start connection pool"},
         {refusing_to_overwrite, "src/sql.erl"},
         {unreadable_output_file, "src/sql.erl", eacces},
         {write_failed, "src/sql.erl", enospc}
@@ -49,9 +48,14 @@ authored_reasons(marmot_config) ->
         {invalid_sslmode, "prefer"},
         {invalid_ssl_root_cert, "/etc/ssl/rds.pem", no_certificates},
         {invalid_ssl_root_cert, "/etc/ssl/rds.pem", enoent}
+    ];
+authored_reasons(protocol) ->
+    [
+        {pgo_application_start_failed, {pgo, bad_return}},
+        {type_server_bootstrap_timeout, marmot}
     ].
 
--define(MODULES, [marmot, codegen, discovery, generator, marmot_config]).
+-define(MODULES, [marmot, codegen, discovery, generator, marmot_config, protocol]).
 
 every_authored_reason_has_a_message_test_() ->
     [

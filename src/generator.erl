@@ -21,8 +21,7 @@
 -type error() :: marmot_error:error().
 
 -type reason() ::
-    {pool_start_failed, protocol:reason()}
-    | {refusing_to_overwrite, string()}
+    {refusing_to_overwrite, string()}
     | {unreadable_output_file, string(), file:posix()}
     | {write_failed, string(), file:posix()}
     | query_plan:reason().
@@ -48,12 +47,6 @@ format_error(postgres_version_too_old) ->
         "marmot needs PostgreSQL 16 or newer. Nullability is inferred from "
         "`EXPLAIN (GENERIC_PLAN)`, which older servers do not support, and without "
         "it marmot cannot tell an always-present column from a nullable one."
-    );
-format_error({pool_start_failed, Reason}) ->
-    marmot_error:message(
-        "marmot could not start or reach its connection pool: ~p. Check the "
-        "host, port and credentials it was given.",
-        [Reason]
     );
 format_error({refusing_to_overwrite, Output}) ->
     marmot_error:message(
@@ -132,7 +125,7 @@ with_pool(MarmotConfig = #config{pool = Pool}, Fun) ->
                 end
             end;
         {error, Reason} ->
-            {error, [{config, ?MODULE, {pool_start_failed, Reason}}]}
+            {error, [{config, protocol, Reason}]}
     end.
 
 -spec owned(#config{}) -> boolean().
