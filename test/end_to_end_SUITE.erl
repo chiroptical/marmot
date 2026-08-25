@@ -63,9 +63,13 @@ examples_dir() ->
     filename:join(filename:dirname(filename:dirname(?FILE)), "examples").
 
 -spec start_maps_pool(#config{}) -> ok.
-start_maps_pool(#config{connection = {some, Connection}}) ->
+start_maps_pool(#config{connection = {some, Connection}, connect_timeout = ConnectTimeout}) ->
     protocol:prepare_pool(
-        marmot_config:new(?MAPS_POOL, {some, Connection#{decode_opts => [return_rows_as_maps]}})
+        marmot_config:new(
+            ?MAPS_POOL,
+            {some, Connection#{decode_opts => [return_rows_as_maps]}},
+            ConnectTimeout
+        )
     ).
 
 -spec apply_schema(pgo:pool(), string()) -> ok.

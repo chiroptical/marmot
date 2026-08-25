@@ -14,7 +14,8 @@
     directories => [file:filename_all()],
     search_root => file:filename_all(),
     pool => pgo:pool(),
-    connection => marmot_config:connection()
+    connection => marmot_config:connection(),
+    connect_timeout => timeout()
 }.
 
 -type error() :: marmot_error:error().
@@ -75,16 +76,23 @@ format_error(Reason) ->
     marmot_error:message("~p", [Reason]).
 
 -spec marmot_config(config()) -> {ok, #config{}} | {error, [error()]}.
-marmot_config(#{pool := Pool, connection := Connection}) ->
-    {ok, marmot_config:new(Pool, {some, Connection})};
-marmot_config(#{pool := Pool}) ->
-    {ok, marmot_config:new(Pool, none)};
-marmot_config(#{connection := Connection}) ->
-    {ok, marmot_config:new(marmot, {some, Connection})};
+marmot_config(#{pool := Pool, connection := Connection} = Config) ->
+    {ok, connect_timeout(marmot_config:new(Pool, {some, Connection}), Config)};
+marmot_config(#{pool := Pool} = Config) ->
+    {ok, connect_timeout(marmot_config:new(Pool, none), Config)};
+marmot_config(#{connection := Connection} = Config) ->
+    {ok, connect_timeout(marmot_config:new(marmot, {some, Connection}), Config)};
 marmot_config(#{}) ->
     case marmot_config:from_env() of
         {ok, MarmotConfig} -> {ok, MarmotConfig};
         {error, Reason} -> {error, [{config, marmot_config, Reason}]}
+    end.
+
+-spec connect_timeout(#config{}, config()) -> #config{}.
+connect_timeout(MarmotConfig, Config) ->
+    case maps:find(connect_timeout, Config) of
+        {ok, ConnectTimeout} -> MarmotConfig#config{connect_timeout = ConnectTimeout};
+        error -> MarmotConfig
     end.
 
 -spec directories(config()) -> {ok, [file:filename_all()]} | {error, [error()]}.

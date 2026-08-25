@@ -13,7 +13,8 @@
     "PGO_PASSWORD",
     "PGO_SSLMODE",
     "PGO_SSLROOTCERT",
-    "PGO_POOL_SIZE"
+    "PGO_POOL_SIZE",
+    "PGO_CONNECT_TIMEOUT"
 ]).
 
 -define(LOCAL, [
@@ -155,6 +156,134 @@ invalid_pool_size_test() ->
 pool_size_test() ->
     {ok, Connection} = connection([{"PGO_POOL_SIZE", "4"} | ?LOCAL]),
     ?assertEqual(4, maps:get(pool_size, Connection)).
+
+pool_size_of_zero_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_POOL_SIZE", 0, 1, 1000}},
+        connection([{"PGO_POOL_SIZE", "0"} | ?LOCAL])
+    ).
+
+pool_size_above_the_maximum_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_POOL_SIZE", 1001, 1, 1000}},
+        connection([{"PGO_POOL_SIZE", "1001"} | ?LOCAL])
+    ).
+
+port_out_of_range_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_PORT", 65536, 1, 65535}},
+        connection([{"PGO_PORT", "65536"} | ?LOCAL])
+    ).
+
+negative_port_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_PORT", -1, 1, 65535}},
+        connection([{"PGO_PORT", "-1"} | ?LOCAL])
+    ).
+
+url_port_at_the_maximum_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@h:65535/db"}]),
+    ?assertEqual(65535, maps:get(port, Connection)).
+
+url_port_above_the_maximum_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, {port_out_of_range, 65536}}},
+        connection([{"DATABASE_URL", "postgres://u:p@h:65536/db"}])
+    ).
+
+url_port_of_zero_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, {port_out_of_range, 0}}},
+        connection([{"DATABASE_URL", "postgres://u:p@h:0/db"}])
+    ).
+
+url_bignum_port_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, {port_out_of_range, 99999999999999999999999}}},
+        connection([{"DATABASE_URL", "postgres://u:p@h:99999999999999999999999/db"}])
+    ).
+
+url_without_a_port_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@h/db"}]),
+    ?assertEqual(5432, maps:get(port, Connection)).
+
+url_with_an_empty_port_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@h:/db"}]),
+    ?assertEqual(5432, maps:get(port, Connection)).
+
+empty_database_is_missing_test() ->
+    ?assertEqual(
+        {error, {missing_credentials, [database]}},
+        connection([{"PGO_DATABASE", ""}, {"PGO_USER", "u"}, {"PGO_PASSWORD", "p"}])
+    ).
+
+empty_user_is_missing_test() ->
+    ?assertEqual(
+        {error, {missing_credentials, [user]}},
+        connection([{"PGO_DATABASE", "db"}, {"PGO_USER", ""}, {"PGO_PASSWORD", "p"}])
+    ).
+
+empty_host_falls_back_to_the_default_test() ->
+    {ok, Connection} = connection([{"PGO_HOST", ""} | ?LOCAL]),
+    ?assertEqual("127.0.0.1", maps:get(host, Connection)).
+
+empty_password_is_allowed_test() ->
+    {ok, Connection} = connection([{"PGO_DATABASE", "db"}, {"PGO_USER", "u"}, {"PGO_PASSWORD", ""}]),
+    ?assertEqual("", maps:get(password, Connection)).
+
+url_empty_user_reports_the_user_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, missing_user}},
+        connection([{"DATABASE_URL", "postgres://:p@h/db"}])
+    ).
+
+url_without_a_password_reports_the_password_test() ->
+    ?assertEqual(
+        {error, {invalid_database_url, missing_password}},
+        connection([{"DATABASE_URL", "postgres://u@h/db"}])
+    ).
+
+url_empty_password_is_allowed_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:@h/db"}]),
+    ?assertEqual("", maps:get(password, Connection)).
+
+connect_timeout_defaults_to_five_seconds_test() ->
+    {ok, Config} = with_env(?LOCAL, fun marmot_config:from_env/0),
+    ?assertEqual(5000, Config#config.connect_timeout).
+
+connect_timeout_is_read_in_seconds_test() ->
+    {ok, Config} = with_env([{"PGO_CONNECT_TIMEOUT", "2"} | ?LOCAL], fun marmot_config:from_env/0),
+    ?assertEqual(2000, Config#config.connect_timeout).
+
+invalid_connect_timeout_test() ->
+    ?assertEqual(
+        {error, {invalid_integer_env, "PGO_CONNECT_TIMEOUT", "2s"}},
+        with_env([{"PGO_CONNECT_TIMEOUT", "2s"} | ?LOCAL], fun marmot_config:from_env/0)
+    ).
+
+connect_timeout_at_the_maximum_test() ->
+    {ok, Config} = with_env(
+        [{"PGO_CONNECT_TIMEOUT", "100"} | ?LOCAL], fun marmot_config:from_env/0
+    ),
+    ?assertEqual(100000, Config#config.connect_timeout).
+
+connect_timeout_above_the_maximum_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_CONNECT_TIMEOUT", 101, 1, 100}},
+        with_env([{"PGO_CONNECT_TIMEOUT", "101"} | ?LOCAL], fun marmot_config:from_env/0)
+    ).
+
+connect_timeout_of_zero_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_CONNECT_TIMEOUT", 0, 1, 100}},
+        with_env([{"PGO_CONNECT_TIMEOUT", "0"} | ?LOCAL], fun marmot_config:from_env/0)
+    ).
+
+negative_connect_timeout_test() ->
+    ?assertEqual(
+        {error, {integer_env_out_of_range, "PGO_CONNECT_TIMEOUT", -1, 1, 100}},
+        with_env([{"PGO_CONNECT_TIMEOUT", "-1"} | ?LOCAL], fun marmot_config:from_env/0)
+    ).
 
 from_env_owns_the_marmot_pool_test() ->
     {ok, Config} = with_env(?LOCAL, fun marmot_config:from_env/0),
