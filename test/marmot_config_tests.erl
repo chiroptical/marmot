@@ -11,6 +11,8 @@
     "PGO_DATABASE",
     "PGO_USER",
     "PGO_PASSWORD",
+    "PGO_SSLMODE",
+    "PGO_SSLROOTCERT",
     "PGO_POOL_SIZE"
 ]).
 
@@ -47,7 +49,8 @@ url_test() ->
             database => "app",
             user => "reader",
             password => "hunter2",
-            pool_size => 1
+            pool_size => 1,
+            ssl => false
         }},
         connection([{"DATABASE_URL", "postgres://reader:hunter2@db.example.com:6543/app"}])
     ).
@@ -86,6 +89,22 @@ url_without_userinfo_test() ->
         connection([{"DATABASE_URL", "postgres://h/app"}])
     ).
 
+url_sslmode_require_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@h/app?sslmode=require"}]),
+    ?assertEqual(true, maps:get(ssl, Connection)),
+    ?assertEqual([{verify, verify_none}], maps:get(ssl_options, Connection)).
+
+url_sslmode_verify_full_test() ->
+    {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@h/app?sslmode=verify-full"}]),
+    ?assertEqual(true, maps:get(ssl, Connection)),
+    ?assertEqual([], maps:get(ssl_options, Connection)).
+
+url_sslmode_is_validated_test() ->
+    ?assertEqual(
+        {error, {invalid_sslmode, "prefer"}},
+        connection([{"DATABASE_URL", "postgres://u:p@h/app?sslmode=prefer"}])
+    ).
+
 variables_test() ->
     ?assertEqual(
         {ok, #{
@@ -94,10 +113,15 @@ variables_test() ->
             database => "marmot",
             user => "marmot",
             password => "marmot",
-            pool_size => 1
+            pool_size => 1,
+            ssl => false
         }},
         connection(?LOCAL)
     ).
+
+variables_sslmode_test() ->
+    {ok, Connection} = connection([{"PGO_SSLMODE", "require"} | ?LOCAL]),
+    ?assertEqual(true, maps:get(ssl, Connection)).
 
 database_url_wins_over_variables_test() ->
     {ok, Connection} = connection([{"DATABASE_URL", "postgres://u:p@elsewhere/other"} | ?LOCAL]),
@@ -136,3 +160,38 @@ from_env_owns_the_marmot_pool_test() ->
     {ok, Config} = with_env(?LOCAL, fun marmot_config:from_env/0),
     ?assertEqual(marmot, Config#config.pool),
     ?assertMatch({some, #{database := "marmot"}}, Config#config.connection).
+
+ssl_root_cert_test() ->
+    Path = write_pem(public_key:pem_encode([{'Certificate', <<1, 2, 3>>, not_encrypted}])),
+    {ok, Connection} = connection([
+        {"PGO_SSLMODE", "verify-full"}, {"PGO_SSLROOTCERT", Path} | ?LOCAL
+    ]),
+    ?assertEqual([{cacerts, [<<1, 2, 3>>]}], maps:get(ssl_options, Connection)).
+
+ssl_root_cert_without_certificates_test() ->
+    Path = write_pem(~"nothing to see here"),
+    ?assertEqual(
+        {error, {invalid_ssl_root_cert, Path, no_certificates}},
+        connection([{"PGO_SSLMODE", "verify-full"}, {"PGO_SSLROOTCERT", Path} | ?LOCAL])
+    ).
+
+missing_ssl_root_cert_test() ->
+    Path = filename:join(temporary_directory(), "no-such-bundle.pem"),
+    ?assertEqual(
+        {error, {invalid_ssl_root_cert, Path, enoent}},
+        connection([{"PGO_SSLMODE", "verify-full"}, {"PGO_SSLROOTCERT", Path} | ?LOCAL])
+    ).
+
+write_pem(Contents) ->
+    Path = filename:join(
+        temporary_directory(),
+        lists:concat([?MODULE, "-", erlang:unique_integer([positive]), ".pem"])
+    ),
+    ok = file:write_file(Path, Contents),
+    Path.
+
+temporary_directory() ->
+    case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        Directory -> string:trim(Directory, trailing, "/")
+    end.
