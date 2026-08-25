@@ -121,7 +121,8 @@ deadline_reason(_Config) ->
     ?assertEqual(checkout_deadline_exceeded, protocol:checkout_reason(PoolRef, closed)).
 
 init_per_suite(Config) ->
-    MarmotConfig = #config{pool = Pool} = marmot_config:from_env(),
+    {ok, MarmotConfig} = marmot_config:from_env(),
+    #config{pool = Pool} = MarmotConfig,
     ok = protocol:prepare_pool(MarmotConfig),
     ok = protocol:prepare_pool(),
     drop_tables(Pool),
