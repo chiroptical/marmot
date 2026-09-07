@@ -9,18 +9,22 @@ the caller has already started `Pool` and marmot only uses it.
 
 -behaviour(marmot_error).
 
--export([new/2, from_env/0, connection_from_env/0, format_error/1]).
+-export([new/2, new/3, from_env/0, connection_from_env/0, format_error/1]).
 
 -export_type([connection/0, reason/0]).
 
 -define(DEFAULT_HOST, "127.0.0.1").
 -define(DEFAULT_PORT, 5432).
+-define(MAX_PORT, 65535).
 -define(DEFAULT_POOL_SIZE, 1).
+-define(MAX_POOL_SIZE, 1000).
+-define(DEFAULT_CONNECT_TIMEOUT_SECONDS, 5).
+-define(MAX_CONNECT_TIMEOUT_SECONDS, 100).
 -define(DEFAULT_SSLMODE, "disable").
 
 -type connection() :: #{
     host => string(),
-    port => integer(),
+    port => inet:port_number(),
     user => string(),
     password => string(),
     database => string(),
@@ -35,12 +39,14 @@ the caller has already started `Pool` and marmot only uses it.
     {invalid_database_url, term()}
     | {missing_credentials, [database | user | password]}
     | {invalid_integer_env, string(), string()}
+    | {integer_env_out_of_range, string(), integer(), integer(), integer()}
     | {invalid_sslmode, string()}
     | {invalid_ssl_root_cert, string(), term()}.
 
 -record #config{
     pool = marmot :: pgo:pool(),
-    connection = none :: none | {some, connection()}
+    connection = none :: none | {some, connection()},
+    connect_timeout = 5000 :: timeout()
 }.
 -export_record([config]).
 
@@ -48,35 +54,53 @@ the caller has already started `Pool` and marmot only uses it.
 new(Pool, Connection) ->
     #config{pool = Pool, connection = Connection}.
 
+-spec new(pgo:pool(), none | {some, connection()}, timeout()) -> #config{}.
+new(Pool, Connection, ConnectTimeout) ->
+    #config{pool = Pool, connection = Connection, connect_timeout = ConnectTimeout}.
+
 -doc """
 Build a `#config{}` from `DATABASE_URL`, or from `PGO_*` when it is unset. See
-`connection_from_env/0`.
+`connection_from_env/0`. `PGO_CONNECT_TIMEOUT` is in seconds, default 5, and
+must be between 1 and 100.
 """.
 -spec from_env() -> {ok, #config{}} | {error, reason()}.
 from_env() ->
     maybe
         {ok, Connection} ?= connection_from_env(),
-        {ok, new(marmot, {some, Connection})}
+        {ok, Seconds} ?=
+            integer_env(
+                "PGO_CONNECT_TIMEOUT",
+                ?DEFAULT_CONNECT_TIMEOUT_SECONDS,
+                1,
+                ?MAX_CONNECT_TIMEOUT_SECONDS
+            ),
+        {ok, new(marmot, {some, Connection}, Seconds * 1000)}
     end.
 
 -doc """
 `DATABASE_URL` when set, otherwise `PGO_HOST` (default `"127.0.0.1"`),
-`PGO_PORT` (default `5432`), `PGO_DATABASE`, `PGO_USER`, `PGO_PASSWORD` and
-`PGO_SSLMODE` (`disable` | `require` | `verify-full`, default `disable`).
+`PGO_PORT` (1 to 65535, default `5432`), `PGO_DATABASE`, `PGO_USER`,
+`PGO_PASSWORD` and `PGO_SSLMODE` (`disable` | `require` | `verify-full`,
+default `disable`).
 
-`PGO_POOL_SIZE` and `PGO_SSLROOTCERT` have no URL representation and are read
-either way.
+`PGO_POOL_SIZE` (1 to 1000, default `1`) and `PGO_SSLROOTCERT` have no URL
+representation and are read either way.
 """.
 -spec connection_from_env() -> {ok, connection()} | {error, reason()}.
 connection_from_env() ->
     maybe
         {ok, Base, SslMode} ?= base_from_env(),
-        {ok, PoolSize} ?= integer_env("PGO_POOL_SIZE", ?DEFAULT_POOL_SIZE),
+        {ok, PoolSize} ?= integer_env("PGO_POOL_SIZE", ?DEFAULT_POOL_SIZE, 1, ?MAX_POOL_SIZE),
         {ok, Ssl} ?= ssl_from_sslmode(SslMode),
         {ok, maps:merge(Base#{pool_size => PoolSize}, Ssl)}
     end.
 
 -spec format_error(reason()) -> binary().
+format_error({invalid_database_url, {port_out_of_range, Port}}) ->
+    marmot_error:message(
+        "DATABASE_URL has port ~p, which is outside the 1 to ~b a TCP port can be.",
+        [Port, ?MAX_PORT]
+    );
 format_error({invalid_database_url, Reason}) ->
     marmot_error:message(
         "DATABASE_URL could not be read: ~p. marmot expects "
@@ -94,6 +118,11 @@ format_error({missing_credentials, Missing}) ->
 format_error({invalid_integer_env, Variable, Value}) ->
     marmot_error:message(
         "~ts is set to ~ts, which is not a number.", [Variable, Value]
+    );
+format_error({integer_env_out_of_range, Variable, Value, Min, Max}) ->
+    marmot_error:message(
+        "~ts is set to ~b, which is outside the ~b to ~b marmot accepts.",
+        [Variable, Value, Min, Max]
     );
 format_error({invalid_sslmode, SslMode}) ->
     marmot_error:message(
@@ -130,18 +159,18 @@ base_from_env() ->
 -spec base_from_variables() -> {ok, connection(), string()} | {error, reason()}.
 base_from_variables() ->
     Required = [
-        {database, os:getenv("PGO_DATABASE")},
-        {user, os:getenv("PGO_USER")},
+        {database, nonempty_env("PGO_DATABASE")},
+        {user, nonempty_env("PGO_USER")},
         {password, os:getenv("PGO_PASSWORD")}
     ],
     case [Key || {Key, false} <- Required] of
         [] ->
             maybe
-                {ok, Port} ?= integer_env("PGO_PORT", ?DEFAULT_PORT),
+                {ok, Port} ?= integer_env("PGO_PORT", ?DEFAULT_PORT, 1, ?MAX_PORT),
                 Base = maps:from_list(Required),
                 {ok,
                     Base#{
-                        host => os:getenv("PGO_HOST", ?DEFAULT_HOST),
+                        host => nonempty_env("PGO_HOST", ?DEFAULT_HOST),
                         port => Port
                     },
                     os:getenv("PGO_SSLMODE", ?DEFAULT_SSLMODE)}
@@ -167,10 +196,11 @@ base_from_url_parts(Parts) ->
         {ok, Host} ?= url_host(Parts),
         {ok, Database} ?= url_database(Parts),
         {ok, User, Password} ?= url_userinfo(Parts),
+        {ok, Port} ?= url_port(Parts),
         {ok,
             #{
                 host => Host,
-                port => maps:get(port, Parts, ?DEFAULT_PORT),
+                port => Port,
                 database => Database,
                 user => User,
                 password => Password
@@ -181,6 +211,12 @@ base_from_url_parts(Parts) ->
 -spec url_host(uri_string:uri_map()) -> {ok, string()} | {error, reason()}.
 url_host(#{host := Host}) when Host =/= "" -> {ok, Host};
 url_host(#{}) -> {error, {invalid_database_url, missing_host}}.
+
+-spec url_port(uri_string:uri_map()) -> {ok, inet:port_number()} | {error, reason()}.
+url_port(#{port := undefined}) -> {ok, ?DEFAULT_PORT};
+url_port(#{port := Port}) when Port >= 1, Port =< ?MAX_PORT -> {ok, Port};
+url_port(#{port := Port}) -> {error, {invalid_database_url, {port_out_of_range, Port}}};
+url_port(#{}) -> {ok, ?DEFAULT_PORT}.
 
 -spec url_database(uri_string:uri_map()) -> {ok, string()} | {error, reason()}.
 url_database(#{path := [$/ | Path]}) when Path =/= "" -> percent_decode(Path);
@@ -195,8 +231,10 @@ url_userinfo(#{userinfo := UserInfo}) ->
                 {ok, DecodedPassword} ?= percent_decode(Password),
                 {ok, DecodedUser, DecodedPassword}
             end;
+        [User] when User =/= "" ->
+            {error, {invalid_database_url, missing_password}};
         _ ->
-            {error, {invalid_database_url, missing_password}}
+            {error, {invalid_database_url, missing_user}}
     end;
 url_userinfo(#{}) ->
     {error, {invalid_database_url, missing_user}}.
@@ -247,14 +285,32 @@ cacerts(Path) ->
             {error, {invalid_ssl_root_cert, Path, Reason}}
     end.
 
--spec integer_env(string(), integer()) -> {ok, integer()} | {error, reason()}.
-integer_env(Variable, Default) ->
+-spec nonempty_env(string()) -> string() | false.
+nonempty_env(Variable) ->
+    case os:getenv(Variable) of
+        "" -> false;
+        Value -> Value
+    end.
+
+-spec nonempty_env(string(), string()) -> string().
+nonempty_env(Variable, Default) ->
+    case nonempty_env(Variable) of
+        false -> Default;
+        Value -> Value
+    end.
+
+-spec integer_env(string(), integer(), integer(), integer()) ->
+    {ok, integer()} | {error, reason()}.
+integer_env(Variable, Default, Min, Max) ->
     case os:getenv(Variable) of
         false ->
             {ok, Default};
         Value ->
-            try
-                {ok, list_to_integer(Value)}
+            try list_to_integer(Value) of
+                Integer when Integer >= Min, Integer =< Max ->
+                    {ok, Integer};
+                Integer ->
+                    {error, {integer_env_out_of_range, Variable, Integer, Min, Max}}
             catch
                 error:badarg -> {error, {invalid_integer_env, Variable, Value}}
             end
