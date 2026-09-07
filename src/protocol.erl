@@ -6,6 +6,8 @@
 -include_lib("pgo/src/pgo_internal.hrl").
 -include_lib("ssl/src/ssl_api.hrl").
 
+-behaviour(marmot_error).
+
 -import_record(marmot_config, [config]).
 
 -export_type([reason/0]).
@@ -17,6 +19,7 @@
     | {unexpected_message, term()}
     | {unsupported_socket, module(), term()}
     | {type_server_bootstrap_timeout, pgo:pool()}
+    | {pgo_application_start_failed, term()}
     | closed
     | {timeout, binary() | erlang:iovec()}
     | inet:posix()
@@ -27,7 +30,8 @@
     prepare_pool/1,
     await_types/1,
     prepare_statement/2,
-    explain/2
+    explain/2,
+    format_error/1
 ]).
 
 -ifdef(TEST).
@@ -39,7 +43,7 @@ Start marmot's pgo connection pool from environment variables. Equivalent to
 `prepare_pool(marmot_config:from_env())`. See `marmot_config:from_env/0` for
 the environment variables read.
 """.
--spec prepare_pool() -> ok | {error, term()}.
+-spec prepare_pool() -> ok | {error, reason() | marmot_config:reason()}.
 prepare_pool() ->
     maybe
         {ok, Config} ?= marmot_config:from_env(),
@@ -57,19 +61,22 @@ Start (or attach to) marmot's pgo connection pool per `Config`.
 Either way, waits for `pg_types`' asynchronous type server bootstrap to finish
 before returning.
 """.
--spec prepare_pool(#config{}) -> ok | {error, term()}.
+-spec prepare_pool(#config{}) -> ok | {error, reason()}.
 prepare_pool(#config{pool = Pool, connection = {some, Connection}}) ->
     maybe
-        {ok, _Started} ?= application:ensure_all_started(pgo),
+        ok ?= start_pgo(),
         ok ?= start_pool(Pool, Connection),
         await_types(Pool)
-    else
-        {error, Reason} ->
-            logger:notice("unable to start connection pool: ~p", [Reason]),
-            {error, ~"Unable to start connection pool"}
     end;
 prepare_pool(#config{connection = none, pool = Pool}) ->
     await_types(Pool).
+
+-spec start_pgo() -> ok | {error, reason()}.
+start_pgo() ->
+    case application:ensure_all_started(pgo) of
+        {ok, _Started} -> ok;
+        {error, Reason} -> {error, {pgo_application_start_failed, Reason}}
+    end.
 
 -dialyzer({nowarn_function, start_pool/2}).
 -spec start_pool(pgo:pool(), marmot_config:connection()) -> ok | {error, term()}.
@@ -79,6 +86,23 @@ start_pool(Pool, Connection) ->
         {error, {already_started, _Pid}} -> ok;
         {error, _} = Error -> Error
     end.
+
+-spec format_error(reason()) -> binary().
+format_error({pgo_application_start_failed, Reason}) ->
+    marmot_error:message(
+        "the pgo application would not start: ~p. marmot cannot talk to "
+        "PostgreSQL without it.",
+        [Reason]
+    );
+format_error({type_server_bootstrap_timeout, Pool}) ->
+    marmot_error:message(
+        "pool ~p connected but its pg_types type server never finished loading "
+        "the type catalogue. The database may be under load, or the role may "
+        "not be able to read pg_type.",
+        [Pool]
+    );
+format_error(Reason) ->
+    marmot_error:message("~p", [Reason]).
 
 -define(TYPE_WAIT_ATTEMPTS, 500).
 -define(TYPE_WAIT_SLEEP_MS, 10).
