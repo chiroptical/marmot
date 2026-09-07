@@ -35,15 +35,19 @@ authored_reasons(discovery) ->
     ];
 authored_reasons(generator) ->
     [
-        missing_connection,
         postgres_version_too_old,
         {pool_start_failed, ~"Unable to start connection pool"},
         {refusing_to_overwrite, "src/sql.erl"},
         {unreadable_output_file, "src/sql.erl", eacces},
         {write_failed, "src/sql.erl", enospc}
+    ];
+authored_reasons(marmot_config) ->
+    [
+        {missing_credentials, [database, user, password]},
+        {invalid_integer_env, "PGO_PORT", "five"}
     ].
 
--define(MODULES, [marmot, codegen, discovery, generator]).
+-define(MODULES, [marmot, codegen, discovery, generator, marmot_config]).
 
 every_authored_reason_has_a_message_test_() ->
     [

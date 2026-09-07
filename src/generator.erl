@@ -14,14 +14,13 @@
     directories => [file:filename_all()],
     search_root => file:filename_all(),
     pool => pgo:pool(),
-    connection => pgo:pool_config()
+    connection => marmot_config:connection()
 }.
 
 -type error() :: marmot_error:error().
 
 -type reason() ::
-    missing_connection
-    | {pool_start_failed, protocol:reason()}
+    {pool_start_failed, protocol:reason()}
     | {refusing_to_overwrite, string()}
     | {unreadable_output_file, string(), file:posix()}
     | {write_failed, string(), file:posix()}
@@ -43,12 +42,6 @@ generate(Config) ->
     end.
 
 -spec format_error(reason()) -> binary().
-format_error(missing_connection) ->
-    marmot_error:message(
-        "marmot needs a database to infer types from. Pass `connection => "
-        "#{database => ..., user => ..., password => ...}` to have marmot start "
-        "its own pool, or `pool => Name` to use a pgo pool you started yourself."
-    );
 format_error(postgres_version_too_old) ->
     marmot_error:message(
         "marmot needs PostgreSQL 16 or newer. Nullability is inferred from "
@@ -89,7 +82,10 @@ marmot_config(#{pool := Pool}) ->
 marmot_config(#{connection := Connection}) ->
     {ok, marmot_config:new(marmot, {some, Connection})};
 marmot_config(#{}) ->
-    {error, [{config, ?MODULE, missing_connection}]}.
+    case marmot_config:from_env() of
+        {ok, MarmotConfig} -> {ok, MarmotConfig};
+        {error, Reason} -> {error, [{config, marmot_config, Reason}]}
+    end.
 
 -spec directories(config()) -> {ok, [file:filename_all()]} | {error, [error()]}.
 directories(#{directories := Directories}) ->

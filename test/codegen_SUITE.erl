@@ -39,7 +39,7 @@ all() ->
     ].
 
 init_per_suite(Config) ->
-    Base = marmot_config:from_env(),
+    {ok, Base} = marmot_config:from_env(),
     MarmotConfig = #config{pool = Pool} = Base#config{pool = default},
     ok = protocol:prepare_pool(MarmotConfig),
     drop_tables(Pool),

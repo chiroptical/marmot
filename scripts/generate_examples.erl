@@ -4,10 +4,7 @@
 
 -spec main([string()]) -> no_return().
 main(_Args) ->
-    Config = #{
-        directories => ["examples/sql"],
-        connection => marmot_config:connection_from_env()
-    },
+    Config = #{directories => ["examples/sql"]},
     case marmot:generate(Config) of
         ok ->
             halt(0);

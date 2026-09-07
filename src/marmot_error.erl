@@ -10,7 +10,8 @@
     marmot:reason()
     | codegen:reason()
     | discovery:reason()
-    | generator:reason().
+    | generator:reason()
+    | marmot_config:reason().
 
 -callback format_error(reason()) -> binary().
 

@@ -37,11 +37,14 @@
 -doc """
 Start marmot's pgo connection pool from environment variables. Equivalent to
 `prepare_pool(marmot_config:from_env())`. See `marmot_config:from_env/0` for
-the environment variables read and their defaults.
+the environment variables read.
 """.
 -spec prepare_pool() -> ok | {error, term()}.
 prepare_pool() ->
-    prepare_pool(marmot_config:from_env()).
+    maybe
+        {ok, Config} ?= marmot_config:from_env(),
+        prepare_pool(Config)
+    end.
 
 -doc """
 Start (or attach to) marmot's pgo connection pool per `Config`.
@@ -69,7 +72,7 @@ prepare_pool(#config{connection = none, pool = Pool}) ->
     await_types(Pool).
 
 -dialyzer({nowarn_function, start_pool/2}).
--spec start_pool(pgo:pool(), pgo:pool_config()) -> ok | {error, term()}.
+-spec start_pool(pgo:pool(), marmot_config:connection()) -> ok | {error, term()}.
 start_pool(Pool, Connection) ->
     case pgo:start_pool(Pool, Connection) of
         {ok, _Pid} -> ok;
