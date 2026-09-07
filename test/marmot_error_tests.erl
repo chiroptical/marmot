@@ -45,7 +45,10 @@ authored_reasons(marmot_config) ->
     [
         {invalid_database_url, missing_database},
         {missing_credentials, [database, user, password]},
-        {invalid_integer_env, "PGO_PORT", "five"}
+        {invalid_integer_env, "PGO_PORT", "five"},
+        {invalid_sslmode, "prefer"},
+        {invalid_ssl_root_cert, "/etc/ssl/rds.pem", no_certificates},
+        {invalid_ssl_root_cert, "/etc/ssl/rds.pem", enoent}
     ].
 
 -define(MODULES, [marmot, codegen, discovery, generator, marmot_config]).
