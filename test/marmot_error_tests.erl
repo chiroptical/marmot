@@ -52,6 +52,17 @@ authored_reasons(marmot_config) ->
 authored_reasons(protocol) ->
     [
         {pgo_application_start_failed, {pgo, bad_return}},
+        {connection_refused, "127.0.0.1", 5432},
+        {host_unreachable, "db.example.com", 5432, nxdomain},
+        {connect_timeout, "db.example.com", 5432, 5000},
+        {invalid_password, "marmot"},
+        {database_does_not_exist, "marmot"},
+        {tls_required, "db.example.com"},
+        {tls_not_supported, "127.0.0.1"},
+        {tls_handshake_failed, {tls_alert, {unknown_ca, "unknown ca"}}},
+        {connection_rejected, #{code => ~"53300", message => ~"too many connections"}},
+        {connection_rejected, #{}},
+        {connection_failed, econnreset},
         {type_server_bootstrap_timeout, marmot}
     ].
 
