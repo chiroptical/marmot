@@ -62,7 +62,7 @@ render_single_column_test() ->
         ~"""
         -module(one_sql).
 
-        -export([one/0]).
+        -export([one/0, one/1]).
 
         -record #one_row{one :: integer()}.
 
@@ -72,12 +72,20 @@ render_single_column_test() ->
 
         -spec one() -> {ok, non_neg_integer(), [#one_row{}]} | {error, term()}.
 
-        one() ->
-            Opts = #{decode_opts =>
-                         [{return_rows_as_maps, false},
-                          {column_name_as_atom, false},
-                          {decode_fun, undefined}]},
-            case pgo:query(one_sql(), [], Opts) of
+        one() -> one(#{}).
+
+        -spec one(Opts :: pgo:options()) -> {ok, non_neg_integer(), [#one_row{}]} |
+                                            {error, term()}.
+
+        one(Opts) ->
+            case pgo:query(one_sql(),
+                           [],
+                           maps:merge(Opts,
+                                      #{decode_opts =>
+                                            [{return_rows_as_maps, false},
+                                             {column_name_as_atom, false},
+                                             {decode_fun, undefined}]}))
+                of
                 #{num_rows := N, rows := Rows} -> {ok, N, [decode_one_row(R) || R <- Rows]};
                 {error, _} = E -> E
             end.
@@ -122,7 +130,8 @@ module_starts_with_banner_test() ->
 doc_less_query_omits_doc_test() ->
     {ok, Forms} = codegen:forms(ping_sql, [ping_query()]),
     Rendered = codegen:render(Forms),
-    ?assertEqual(nomatch, binary:match(Rendered, ~"-doc(")).
+    ?assertEqual(0, length(binary:matches(Rendered, ~"-doc"))),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"Equivalent to ping/0")).
 
 duplicate_output_columns_test() ->
     {module, marmot} = code:ensure_loaded(marmot),
@@ -198,6 +207,23 @@ name_collision_test() ->
     {error, Reason} = Result,
     Message = codegen:format_error(Reason),
     ?assertNotEqual(nomatch, binary:match(Message, ~"foo_sql")).
+
+opts_arity_name_collision_test() ->
+    {module, marmot} = code:ensure_loaded(marmot),
+    Query = #typed_query{
+        input_file_name = "array_elem.sql",
+        starting_line = 1,
+        root_name = "array_elem",
+        content = ~"select $1::integer as x",
+        params = [int],
+        returns = [#field{identifier = x, type = int}],
+        doc = []
+    },
+    Result = codegen:forms(collide_sql, [Query]),
+    ?assertEqual({error, {name_collision, array_elem, 2}}, Result),
+    {error, Reason} = Result,
+    Message = codegen:format_error(Reason),
+    ?assertNotEqual(nomatch, binary:match(Message, ~"array_elem")).
 
 mood_enum() ->
     {enum, {100, ~"mood", [~"happy", ~"sad", ~"meh"]}}.

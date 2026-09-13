@@ -4,10 +4,15 @@
 
 -export([
     get_event/1,
+    get_event/2,
     get_user/1,
+    get_user/2,
     insert_user/3,
+    insert_user/4,
     list_users_by_mood/1,
-    user_with_latest_order/1
+    list_users_by_mood/2,
+    user_with_latest_order/1,
+    user_with_latest_order/2
 ]).
 
 -export_type([ex_mood/0]).
@@ -56,16 +61,30 @@ get_event_sql() ->
     {ok, non_neg_integer(), [#get_event_row{}]}
     | {error, term()}.
 
-get_event(Arg1) ->
-    Opts = #{
-        decode_opts =>
-            [
-                {return_rows_as_maps, false},
-                {column_name_as_atom, false},
-                {decode_fun, undefined}
-            ]
-    },
-    case pgo:query(get_event_sql(), [Arg1], Opts) of
+get_event(Arg1) -> get_event(Arg1, #{}).
+
+-spec get_event(Arg1 :: uuid:uuid(), Opts :: pgo:options()) ->
+    {ok, non_neg_integer(), [#get_event_row{}]}
+    | {error, term()}.
+
+get_event(Arg1, Opts) ->
+    case
+        pgo:query(
+            get_event_sql(),
+            [Arg1],
+            maps:merge(
+                Opts,
+                #{
+                    decode_opts =>
+                        [
+                            {return_rows_as_maps, false},
+                            {column_name_as_atom, false},
+                            {decode_fun, undefined}
+                        ]
+                }
+            )
+        )
+    of
         #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_event_row(R) || R <- Rows]};
         {error, _} = E -> E
     end.
@@ -91,16 +110,30 @@ get_user_sql() ->
     {ok, non_neg_integer(), [#get_user_row{}]}
     | {error, term()}.
 
-get_user(Arg1) ->
-    Opts = #{
-        decode_opts =>
-            [
-                {return_rows_as_maps, false},
-                {column_name_as_atom, false},
-                {decode_fun, undefined}
-            ]
-    },
-    case pgo:query(get_user_sql(), [Arg1], Opts) of
+get_user(Arg1) -> get_user(Arg1, #{}).
+
+-spec get_user(Arg1 :: integer(), Opts :: pgo:options()) ->
+    {ok, non_neg_integer(), [#get_user_row{}]}
+    | {error, term()}.
+
+get_user(Arg1, Opts) ->
+    case
+        pgo:query(
+            get_user_sql(),
+            [Arg1],
+            maps:merge(
+                Opts,
+                #{
+                    decode_opts =>
+                        [
+                            {return_rows_as_maps, false},
+                            {column_name_as_atom, false},
+                            {decode_fun, undefined}
+                        ]
+                }
+            )
+        )
+    of
         #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_user_row(R) || R <- Rows]};
         {error, _} = E -> E
     end.
@@ -130,16 +163,33 @@ insert_user_sql() ->
     {ok, non_neg_integer()}
     | {error, term()}.
 
-insert_user(Arg1, Arg2, Arg3) ->
-    Opts = #{
-        decode_opts =>
-            [
-                {return_rows_as_maps, false},
-                {column_name_as_atom, false},
-                {decode_fun, undefined}
-            ]
-    },
-    case pgo:query(insert_user_sql(), [Arg1, Arg2, from_ex_mood(Arg3)], Opts) of
+insert_user(Arg1, Arg2, Arg3) -> insert_user(Arg1, Arg2, Arg3, #{}).
+
+-spec insert_user(
+    Arg1 :: integer(),
+    Arg2 :: binary(),
+    Arg3 :: ex_mood(),
+    Opts :: pgo:options()
+) -> {ok, non_neg_integer()} | {error, term()}.
+
+insert_user(Arg1, Arg2, Arg3, Opts) ->
+    case
+        pgo:query(
+            insert_user_sql(),
+            [Arg1, Arg2, from_ex_mood(Arg3)],
+            maps:merge(
+                Opts,
+                #{
+                    decode_opts =>
+                        [
+                            {return_rows_as_maps, false},
+                            {column_name_as_atom, false},
+                            {decode_fun, undefined}
+                        ]
+                }
+            )
+        )
+    of
         #{num_rows := N} -> {ok, N};
         {error, _} = E -> E
     end.
@@ -156,16 +206,30 @@ list_users_by_mood_sql() ->
     {ok, non_neg_integer(), [#list_users_by_mood_row{}]}
     | {error, term()}.
 
-list_users_by_mood(Arg1) ->
-    Opts = #{
-        decode_opts =>
-            [
-                {return_rows_as_maps, false},
-                {column_name_as_atom, false},
-                {decode_fun, undefined}
-            ]
-    },
-    case pgo:query(list_users_by_mood_sql(), [from_ex_mood(Arg1)], Opts) of
+list_users_by_mood(Arg1) -> list_users_by_mood(Arg1, #{}).
+
+-spec list_users_by_mood(Arg1 :: ex_mood(), Opts :: pgo:options()) ->
+    {ok, non_neg_integer(), [#list_users_by_mood_row{}]}
+    | {error, term()}.
+
+list_users_by_mood(Arg1, Opts) ->
+    case
+        pgo:query(
+            list_users_by_mood_sql(),
+            [from_ex_mood(Arg1)],
+            maps:merge(
+                Opts,
+                #{
+                    decode_opts =>
+                        [
+                            {return_rows_as_maps, false},
+                            {column_name_as_atom, false},
+                            {decode_fun, undefined}
+                        ]
+                }
+            )
+        )
+    of
         #{num_rows := N, rows := Rows} ->
             {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]};
         {error, _} = E ->
@@ -196,16 +260,30 @@ user_with_latest_order_sql() ->
     {ok, non_neg_integer(), [#user_with_latest_order_row{}]}
     | {error, term()}.
 
-user_with_latest_order(Arg1) ->
-    Opts = #{
-        decode_opts =>
-            [
-                {return_rows_as_maps, false},
-                {column_name_as_atom, false},
-                {decode_fun, undefined}
-            ]
-    },
-    case pgo:query(user_with_latest_order_sql(), [Arg1], Opts) of
+user_with_latest_order(Arg1) -> user_with_latest_order(Arg1, #{}).
+
+-spec user_with_latest_order(Arg1 :: integer(), Opts :: pgo:options()) ->
+    {ok, non_neg_integer(), [#user_with_latest_order_row{}]}
+    | {error, term()}.
+
+user_with_latest_order(Arg1, Opts) ->
+    case
+        pgo:query(
+            user_with_latest_order_sql(),
+            [Arg1],
+            maps:merge(
+                Opts,
+                #{
+                    decode_opts =>
+                        [
+                            {return_rows_as_maps, false},
+                            {column_name_as_atom, false},
+                            {decode_fun, undefined}
+                        ]
+                }
+            )
+        )
+    of
         #{num_rows := N, rows := Rows} ->
             {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]};
         {error, _} = E ->
