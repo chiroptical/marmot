@@ -78,10 +78,7 @@ render_single_column_test() ->
                           {column_name_as_atom, false},
                           {decode_fun, undefined}]},
             case pgo:query(one_sql(), [], Opts) of
-                #{num_rows := N, rows := Rows} ->
-                    try {ok, N, [decode_one_row(R) || R <- Rows]} catch
-                        {marmot_decode_error, Reason} -> {error, Reason}
-                    end;
+                #{num_rows := N, rows := Rows} -> {ok, N, [decode_one_row(R) || R <- Rows]};
                 {error, _} = E -> E
             end.
 
@@ -346,12 +343,24 @@ array_column_renders_array_elem_test() ->
     {ok, Forms} = codegen:forms(xs_sql, [array_column_query()]),
     Rendered = codegen:render(Forms),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"array_elem(xs, X)")),
+    ?assertNotEqual(
+        nomatch, binary:match(Rendered, ~"error({marmot_decode_error, {unexpected_null_element")
+    ),
+    ?assertNotEqual(
+        nomatch,
+        binary:match(Rendered, ~"error({marmot_decode_error, {unsupported_multidimensional_array")
+    ),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"throw(")),
     ?assertEqual(nomatch, binary:match(Rendered, ~"assume_not_null(")).
 
 assumed_not_null_renders_guard_test() ->
     {ok, Forms} = codegen:forms(n_sql, [assumed_not_null_column_query()]),
     Rendered = codegen:render(Forms),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"assume_not_null(n, C1)")),
+    ?assertNotEqual(
+        nomatch, binary:match(Rendered, ~"error({marmot_decode_error, {unexpected_null")
+    ),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"throw(")),
     ?assertEqual(nomatch, binary:match(Rendered, ~"array_elem(")).
 
 no_column_needs_guards_omits_both_test() ->
@@ -365,4 +374,8 @@ tricky_labels_render_quoted_test() ->
     Rendered = codegen:render(Forms),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"'a-b'")),
     ?assertNotEqual(nomatch, binary:match(Rendered, ~"'not allowed'")),
-    ?assertNotEqual(nomatch, binary:match(Rendered, ~"'UPPER'")).
+    ?assertNotEqual(nomatch, binary:match(Rendered, ~"'UPPER'")),
+    ?assertNotEqual(
+        nomatch, binary:match(Rendered, ~"error({marmot_decode_error, {unknown_enum_label")
+    ),
+    ?assertEqual(nomatch, binary:match(Rendered, ~"throw(")).

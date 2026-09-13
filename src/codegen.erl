@@ -243,7 +243,7 @@ enum_decode_form({_Oid, Name, Variants}) ->
 unknown_enum_label_clause(TypeName) ->
     V = {var, codegen_type:anno(), 'V'},
     {clause, codegen_type:anno(), [V], [], [
-        {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+        {call, codegen_type:anno(), {atom, codegen_type:anno(), error}, [
             {tuple, codegen_type:anno(), [
                 {atom, codegen_type:anno(), marmot_decode_error},
                 {tuple, codegen_type:anno(), [
@@ -323,7 +323,7 @@ assume_not_null_form() ->
     Col = {var, codegen_type:anno(), 'Col'},
     Clause1 =
         {clause, codegen_type:anno(), [Col, {atom, codegen_type:anno(), null}], [], [
-            {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+            {call, codegen_type:anno(), {atom, codegen_type:anno(), error}, [
                 {tuple, codegen_type:anno(), [
                     {atom, codegen_type:anno(), marmot_decode_error},
                     {tuple, codegen_type:anno(), [
@@ -341,7 +341,7 @@ array_elem_form() ->
     Col = {var, codegen_type:anno(), 'Col'},
     Clause1 =
         {clause, codegen_type:anno(), [Col, {atom, codegen_type:anno(), null}], [], [
-            {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+            {call, codegen_type:anno(), {atom, codegen_type:anno(), error}, [
                 {tuple, codegen_type:anno(), [
                     {atom, codegen_type:anno(), marmot_decode_error},
                     {tuple, codegen_type:anno(), [
@@ -359,7 +359,7 @@ array_elem_form() ->
                 ]}
             ],
             [], [
-                {call, codegen_type:anno(), {atom, codegen_type:anno(), throw}, [
+                {call, codegen_type:anno(), {atom, codegen_type:anno(), error}, [
                     {tuple, codegen_type:anno(), [
                         {atom, codegen_type:anno(), marmot_decode_error},
                         {tuple, codegen_type:anno(), [
@@ -528,9 +528,7 @@ query_text() ->
     "                  {decode_fun, undefined}]},\n"
     "    case pgo:query('@SqlName'(), [_@@EncodedArgs], Opts) of\n"
     "        #{num_rows := N, rows := Rows} ->\n"
-    "            try {ok, N, ['@DecodeName'(R) || R <- Rows]} catch\n"
-    "                throw:{marmot_decode_error, Reason} -> {error, Reason}\n"
-    "            end;\n"
+    "            {ok, N, ['@DecodeName'(R) || R <- Rows]};\n"
     "        {error, _} = E -> E\n"
     "    end.".
 
