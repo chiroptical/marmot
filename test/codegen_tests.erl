@@ -62,7 +62,7 @@ render_single_column_test() ->
         ~"""
         -module(one_sql).
 
-        -export([one/0, one_sql/0]).
+        -export([one/0]).
 
         -record #one_row{one :: integer()}.
 

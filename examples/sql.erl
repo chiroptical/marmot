@@ -4,15 +4,10 @@
 
 -export([
     get_event/1,
-    get_event_sql/0,
     get_user/1,
-    get_user_sql/0,
     insert_user/3,
-    insert_user_sql/0,
     list_users_by_mood/1,
-    list_users_by_mood_sql/0,
-    user_with_latest_order/1,
-    user_with_latest_order_sql/0
+    user_with_latest_order/1
 ]).
 
 -export_type([ex_mood/0]).
