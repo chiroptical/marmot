@@ -38,7 +38,9 @@ authored_reasons(generator) ->
         postgres_version_too_old,
         {refusing_to_overwrite, "src/sql.erl"},
         {unreadable_output_file, "src/sql.erl", eacces},
-        {write_failed, "src/sql.erl", enospc}
+        {write_failed, "src/sql.erl", enospc},
+        {invalid_target_otp, 0},
+        {invalid_target_otp, "29"}
     ];
 authored_reasons(marmot_config) ->
     [

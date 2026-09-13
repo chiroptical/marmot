@@ -15,7 +15,8 @@
     search_root => file:filename_all(),
     pool => pgo:pool(),
     connection => marmot_config:connection(),
-    connect_timeout => timeout()
+    connect_timeout => timeout(),
+    target_otp => pos_integer()
 }.
 
 -type error() :: marmot_error:error().
@@ -24,11 +25,13 @@
     {refusing_to_overwrite, string()}
     | {unreadable_output_file, string(), file:posix()}
     | {write_failed, string(), file:posix()}
+    | {invalid_target_otp, term()}
     | query_plan:reason().
 
 -spec generate(config()) -> ok | {error, [error()]}.
 generate(Config) ->
     maybe
+        {ok, TargetOtp} ?= target_otp(Config),
         {ok, MarmotConfig} ?= marmot_config(Config),
         {ok, Directories} ?= directories(Config),
         {ok, Modules} ?= modules(Directories),
@@ -37,7 +40,9 @@ generate(Config) ->
                 logger:notice(#{what => no_query_directories, directories => Directories}),
                 ok;
             _ ->
-                with_pool(MarmotConfig, fun() -> generate_modules(MarmotConfig, Modules) end)
+                with_pool(MarmotConfig, fun() ->
+                    generate_modules(MarmotConfig, TargetOtp, Modules)
+                end)
         end
     end.
 
@@ -50,7 +55,7 @@ format_error(postgres_version_too_old) ->
     );
 format_error({refusing_to_overwrite, Output}) ->
     marmot_error:message(
-        "~ts already exists and was not written by marmot — it does not start "
+        "~ts already exists and was not written by marmot: it does not start "
         "with marmot's generated-code banner. Move it aside, or rename the query "
         "directory so it generates a differently named module.",
         [Output]
@@ -65,8 +70,24 @@ format_error({write_failed, Output, Reason}) ->
     marmot_error:message(
         "~ts could not be written: ~p.", [Output, Reason]
     );
+format_error({invalid_target_otp, Value}) ->
+    marmot_error:message(
+        "target_otp is ~p, which is not a positive integer. It names the release "
+        "that will compile the generated code: 29 and up gets native records, "
+        "anything older gets classic records in a `.hrl` header. Run "
+        "`erlang:system_info(otp_release).` in that release's shell to find it.",
+        [Value]
+    );
 format_error(Reason) ->
     marmot_error:message("~p", [Reason]).
+
+-spec target_otp(config()) -> {ok, pos_integer()} | {error, [error()]}.
+target_otp(#{target_otp := TargetOtp}) when is_integer(TargetOtp), TargetOtp > 0 ->
+    {ok, TargetOtp};
+target_otp(#{target_otp := TargetOtp}) ->
+    {error, [{config, ?MODULE, {invalid_target_otp, TargetOtp}}]};
+target_otp(_Config) ->
+    {ok, list_to_integer(erlang:system_info(otp_release))}.
 
 -spec marmot_config(config()) -> {ok, #config{}} | {error, [error()]}.
 marmot_config(#{pool := Pool, connection := Connection} = Config) ->
@@ -142,11 +163,11 @@ stop_pool(Pool) ->
             ok
     end.
 
--spec generate_modules(#config{}, [#query_module{}]) -> ok | {error, [error()]}.
-generate_modules(MarmotConfig, Modules) ->
+-spec generate_modules(#config{}, pos_integer(), [#query_module{}]) -> ok | {error, [error()]}.
+generate_modules(MarmotConfig, TargetOtp, Modules) ->
     maybe
         ok ?= ensure_postgres_version(MarmotConfig),
-        {ok, Rendered} ?= render(MarmotConfig, Modules),
+        {ok, Rendered} ?= render(MarmotConfig, TargetOtp, Modules),
         ok ?= check_targets(Rendered),
         write(Rendered)
     end.
@@ -158,26 +179,38 @@ ensure_postgres_version(MarmotConfig) ->
         {error, Reason} -> {error, [{config, ?MODULE, Reason}]}
     end.
 
--spec render(#config{}, [#query_module{}]) -> {ok, [{string(), binary()}]} | {error, [error()]}.
-render(MarmotConfig, Modules) ->
-    Results = [render_module(MarmotConfig, Module) || Module <- Modules],
+-spec render(#config{}, pos_integer(), [#query_module{}]) ->
+    {ok, [{string(), binary()}]} | {error, [error()]}.
+render(MarmotConfig, TargetOtp, Modules) ->
+    Results = [render_module(MarmotConfig, TargetOtp, Module) || Module <- Modules],
     case lists:append([Errors || {error, Errors} <- Results]) of
-        [] -> {ok, [Rendered || {ok, Rendered} <- Results]};
+        [] -> {ok, lists:append([Rendered || {ok, Rendered} <- Results])};
         Errors -> {error, Errors}
     end.
 
--spec render_module(#config{}, #query_module{}) ->
-    {ok, {string(), binary()}} | {error, [error()]}.
-render_module(MarmotConfig, QueryModule) ->
+-spec render_module(#config{}, pos_integer(), #query_module{}) ->
+    {ok, [{string(), binary()}]} | {error, [error()]}.
+render_module(MarmotConfig, TargetOtp, QueryModule) ->
     case typed_queries(MarmotConfig, QueryModule#query_module.source_files) of
         {ok, Queries} ->
-            case codegen:module(QueryModule#query_module.module, Queries) of
-                {ok, Source} -> {ok, {QueryModule#query_module.output_file, Source}};
-                {error, Reason} -> {error, [{QueryModule#query_module.directory, codegen, Reason}]}
+            case codegen:module(QueryModule#query_module.module, Queries, TargetOtp) of
+                {ok, #{erl := Erl, hrl := none}} ->
+                    {ok, [{QueryModule#query_module.output_file, Erl}]};
+                {ok, #{erl := Erl, hrl := Hrl}} ->
+                    {ok, [
+                        {QueryModule#query_module.output_file, Erl},
+                        {hrl_output(QueryModule#query_module.output_file), Hrl}
+                    ]};
+                {error, Reason} ->
+                    {error, [{QueryModule#query_module.directory, codegen, Reason}]}
             end;
         {error, _} = Error ->
             Error
     end.
+
+-spec hrl_output(string()) -> string().
+hrl_output(Output) ->
+    filename:rootname(Output) ++ ".hrl".
 
 -spec typed_queries(#config{}, [string()]) -> {ok, [#typed_query{}]} | {error, [error()]}.
 typed_queries(MarmotConfig, Files) ->

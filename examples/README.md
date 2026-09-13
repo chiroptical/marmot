@@ -57,9 +57,47 @@ what the generated `-spec`s claim.
 own `-spec`s and pattern-matches the generated records, so dialyzer checks the
 generated code against a caller rather than in isolation.
 
+Records and headers
+-------------------
+
+`sql.erl` here is generated for OTP 29's native records: `-record
+#get_user_row{...}` plus `-export_record`, and consumers reach them with
+`-import_record(sql, [...])`.
+
+You can generate the same queries with `target_otp => 28` (or lower)
+and they come out as classic Erlang: the records move into `sql.hrl` as
+`-record(get_user_row, {...})` definitions — carrying the enum types with them —
+and the generated module reads them via `-include("sql.hrl")`. A consumer on any
+OTP then includes the header and matches rows like any other record:
+
+```erlang
+-include("sql.hrl").
+
+fetch_name(Id) ->
+    maybe
+        {ok, 1, [#get_user_row{name = {some, Name}}]} ?= sql:get_user(Id),
+        {ok, Name}
+    else
+        {ok, 1, [#get_user_row{name = none}]} -> unnamed;
+        {ok, 0, []} -> not_found;
+        {error, Reason} -> {error, Reason}
+    end.
+```
+
+`target_otp` names the OTP release that will compile the generated code. Right
+now, marmot targets OTP 29 as a minimum version, but can generate code for older
+Erlang releases. The `.hrl` is emitted only when the directory has row-returning
+queries. Marmot won't delete files on you and could leave stray `.hrl` files
+behind.
+
 Testing
 -------
 
 `test/end_to_end_SUITE.erl` regenerates from `sql/` into its `priv_dir` and
-asserts the result is byte-identical to the checked-in `sql.erl`, then compiles,
-loads and calls it against live Postgres. A stale `sql.erl` fails the suite.
+asserts the result matches the checked-in `sql.erl` under a common
+pretty-printer (the comparison is insensitive to formatting; the checked-in
+bytes are `make examples` output after `treefmt`), then compiles, loads and
+calls it against live Postgres. A stale `sql.erl` fails the suite. The suite
+also generates at `target_otp => 28`: a record-ful directory as a classic
+`.erl` + `.hrl` pair plus an include-based consumer, and a record-less
+directory that must come out with no header at all.

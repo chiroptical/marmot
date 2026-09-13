@@ -17,7 +17,9 @@
     remote_typed_columns_decode/1,
     consumer_module_compiles_and_runs/1,
     pool_decode_opts_do_not_break_decoding/1,
-    opts_arity_selects_pool/1
+    opts_arity_selects_pool/1,
+    classic_records_compile_with_header/1,
+    record_less_classic_compiles_without_header/1
 ]).
 
 -define(MAPS_POOL, e2e_maps).
@@ -30,7 +32,9 @@ all() ->
         remote_typed_columns_decode,
         consumer_module_compiles_and_runs,
         pool_decode_opts_do_not_break_decoding,
-        opts_arity_selects_pool
+        opts_arity_selects_pool,
+        classic_records_compile_with_header,
+        record_less_classic_compiles_without_header
     ].
 
 init_per_suite(Config) ->
@@ -126,7 +130,7 @@ generate(#config{pool = Pool}, Examples, PrivDir) ->
         {ok, _} = file:copy(Source, filename:join(Queries, filename:basename(Source)))
      || Source <- filelib:wildcard(filename:join([Examples, "sql", "*.sql"]))
     ],
-    ok = marmot:generate(#{directories => [Queries], pool => Pool}),
+    ok = marmot:generate(#{directories => [Queries], pool => Pool, target_otp => 29}),
     {ok, Source} = file:read_file(filename:join(PrivDir, "sql.erl")),
     Source.
 
@@ -226,3 +230,65 @@ opts_arity_selects_pool(_Config) ->
         {in_other_pool_transaction, ?MAPS_POOL},
         pgo:transaction(default, fun() -> sql:get_user(1, #{pool => ?MAPS_POOL}) end, #{})
     ).
+
+-spec generate_classic(list(), string(), string()) -> ok.
+generate_classic(Config, DirName, Pattern) ->
+    #config{pool = Pool} = proplists:get_value(marmot_config, Config),
+    Examples = proplists:get_value(examples, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    Queries = filename:join(PrivDir, DirName),
+    ok = filelib:ensure_path(Queries),
+    Sources = filelib:wildcard(filename:join([Examples, "sql", Pattern])),
+    [
+        {ok, _} = file:copy(Source, filename:join(Queries, filename:basename(Source)))
+     || Source <- Sources
+    ],
+    ok = marmot:generate(#{directories => [Queries], pool => Pool, target_otp => 28}).
+
+classic_records_compile_with_header(Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    ok = generate_classic(Config, "sql28", "*.sql"),
+    Erl = filename:join(PrivDir, "sql28.erl"),
+    Hrl = filename:join(PrivDir, "sql28.hrl"),
+    ?assert(filelib:is_regular(Hrl)),
+    {ok, Header} = file:read_file(Hrl),
+    ?assertMatch({0, _}, binary:match(Header, codegen:banner())),
+    ?assertNotEqual(nomatch, binary:match(Header, <<"-record(get_user_row,">>)),
+    ?assertEqual(nomatch, binary:match(Header, <<"export_record">>)),
+    {ok, Source} = file:read_file(Erl),
+    ?assertNotEqual(nomatch, binary:match(Source, <<"-include(\"sql28.hrl\")">>)),
+    ?assertEqual(nomatch, binary:match(Source, <<"-record">>)),
+    sql28 = compile_and_load(Erl, PrivDir),
+    {ok, 1, [Row]} = sql28:get_user(1),
+    ?assertEqual({get_user_row, 1, {some, ~"ada"}, happy}, Row),
+    Consumer = filename:join(PrivDir, "sql28_consumer.erl"),
+    ok = file:write_file(Consumer, consumer_source()),
+    sql28_consumer = compile_and_load(Consumer, PrivDir),
+    ?assertEqual({ok, ~"ada"}, sql28_consumer:fetch_name(1)),
+    ?assertEqual(unnamed, sql28_consumer:fetch_name(2)),
+    ?assertEqual(not_found, sql28_consumer:fetch_name(404)).
+
+-spec consumer_source() -> binary().
+consumer_source() ->
+    <<
+        "-module(sql28_consumer).\n"
+        "-export([fetch_name/1]).\n"
+        "-include(\"sql28.hrl\").\n"
+        "fetch_name(Id) ->\n"
+        "    case sql28:get_user(Id) of\n"
+        "        {ok, 1, [#get_user_row{name = {some, Name}}]} -> {ok, Name};\n"
+        "        {ok, 1, [#get_user_row{name = none}]} -> unnamed;\n"
+        "        {ok, 0, []} -> not_found\n"
+        "    end.\n"
+    >>.
+
+record_less_classic_compiles_without_header(Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    ok = generate_classic(Config, "sqlnone28", "insert_user.sql"),
+    Erl = filename:join(PrivDir, "sqlnone28.erl"),
+    ?assertEqual(false, filelib:is_regular(filename:join(PrivDir, "sqlnone28.hrl"))),
+    {ok, Source} = file:read_file(Erl),
+    ?assertEqual(nomatch, binary:match(Source, <<"-include">>)),
+    ?assertNotEqual(nomatch, binary:match(Source, <<"-type ex_mood() ::">>)),
+    sqlnone28 = compile_and_load(Erl, PrivDir),
+    ?assertEqual({ok, 1}, sqlnone28:insert_user(30, ~"x", happy)).
