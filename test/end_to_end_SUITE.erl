@@ -189,7 +189,9 @@ consumer_module_compiles_and_runs(Config) ->
     ?assertEqual(not_found, example_users:fetch_name(404)),
     ?assertEqual({ok, happy}, example_users:fetch_mood(1)),
     ?assertEqual({ok, 750}, example_users:latest_order_total(1)),
-    ?assertEqual(no_orders, example_users:latest_order_total(2)).
+    ?assertEqual(no_orders, example_users:latest_order_total(2)),
+    ?assertEqual({ok, 750}, example_users:latest_order_total(1, #{pool => default})),
+    ?assertEqual(no_orders, example_users:latest_order_total(2, #{pool => ?MAPS_POOL})).
 
 pool_decode_opts_do_not_break_decoding(_Config) ->
     #{rows := [#{~"id" := 1}]} =

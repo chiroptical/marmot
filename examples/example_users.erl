@@ -13,6 +13,7 @@
     add/3,
     ids_in_mood/1,
     latest_order_total/1,
+    latest_order_total/2,
     event_recorded_at/1
 ]).
 
@@ -53,7 +54,12 @@ ids_in_mood(Mood) ->
 -spec latest_order_total(Id :: integer()) ->
     {ok, integer()} | no_orders | not_found | {error, term()}.
 latest_order_total(Id) ->
-    case sql:user_with_latest_order(Id) of
+    latest_order_total(Id, #{}).
+
+-spec latest_order_total(Id :: integer(), Opts :: pgo:options()) ->
+    {ok, integer()} | no_orders | not_found | {error, term()}.
+latest_order_total(Id, Opts) ->
+    case sql:user_with_latest_order(Id, Opts) of
         {ok, _Count, [#user_with_latest_order_row{order_total = {some, Total}} | _]} ->
             {ok, Total};
         {ok, _Count, [#user_with_latest_order_row{order_total = none} | _]} ->
