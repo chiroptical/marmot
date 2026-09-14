@@ -113,7 +113,7 @@ generate_and_load(MarmotConfig, Module, Statements) ->
      || {RootName, Statement} <- Statements
     ],
     {ok, Forms} = codegen:forms(Module, TypedQueries),
-    {ok, _, Binary} = compile:forms(Forms, [return_errors]),
+    {ok, _, Binary} = marmot_compile:forms(Forms),
     {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
     Module.
 

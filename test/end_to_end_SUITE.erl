@@ -48,13 +48,13 @@ init_per_suite(Config) ->
     EventId = uuid:get_v4(),
     insert_fixtures(Pool, EventId),
     PrivDir = proplists:get_value(priv_dir, Config),
-    Generated = generate(MarmotConfig, Examples, PrivDir),
+    ok = generate(MarmotConfig, Examples, PrivDir),
     compile_and_load(filename:join(PrivDir, "sql.erl"), PrivDir),
     [
         {marmot_config, MarmotConfig},
         {examples, Examples},
         {event_id, EventId},
-        {generated, Generated}
+        {generated, filename:join(PrivDir, "sql.erl")}
         | Config
     ].
 
@@ -122,7 +122,7 @@ insert_fixtures(Pool, EventId) ->
         ),
     ok.
 
--spec generate(#config{}, string(), string()) -> binary().
+-spec generate(#config{}, string(), string()) -> ok.
 generate(#config{pool = Pool}, Examples, PrivDir) ->
     Queries = filename:join(PrivDir, "sql"),
     ok = filelib:ensure_path(Queries),
@@ -130,9 +130,7 @@ generate(#config{pool = Pool}, Examples, PrivDir) ->
         {ok, _} = file:copy(Source, filename:join(Queries, filename:basename(Source)))
      || Source <- filelib:wildcard(filename:join([Examples, "sql", "*.sql"]))
     ],
-    ok = marmot:generate(#{directories => [Queries], pool => Pool, target_otp => 29}),
-    {ok, Source} = file:read_file(filename:join(PrivDir, "sql.erl")),
-    Source.
+    ok = marmot:generate(#{directories => [Queries], pool => Pool, target_otp => 29}).
 
 -spec compile_and_load(string(), string()) -> module().
 compile_and_load(Path, OutDir) ->
@@ -141,32 +139,15 @@ compile_and_load(Path, OutDir) ->
     {module, Module} = code:load_file(Module),
     Module.
 
--spec reprint(binary()) -> binary().
-reprint(Source) ->
-    {ok, Tokens, _} = erl_scan:string(unicode:characters_to_list(Source, utf8)),
-    codegen:render([
-        begin
-            {ok, Form} = erl_parse:parse_form(FormTokens),
-            Form
-        end
-     || FormTokens <- form_tokens(Tokens)
-    ]).
-
--spec form_tokens([erl_scan:token()]) -> [[erl_scan:token()]].
-form_tokens([]) ->
-    [];
-form_tokens(Tokens) ->
-    {Form, Rest} = lists:splitwith(fun(Token) -> element(1, Token) =/= dot end, Tokens),
-    case Rest of
-        [Dot | Tail] -> [Form ++ [Dot] | form_tokens(Tail)];
-        [] -> [Form]
-    end.
+-spec reprint(string()) -> binary().
+reprint(Path) ->
+    {ok, Forms} = epp_dodger:parse_file(Path),
+    codegen:render(Forms).
 
 generates_from_examples(Config) ->
     Examples = proplists:get_value(examples, Config),
     Generated = proplists:get_value(generated, Config),
-    {ok, CheckedIn} = file:read_file(filename:join(Examples, "sql.erl")),
-    ?assertEqual(reprint(CheckedIn), reprint(Generated)).
+    ?assertEqual(reprint(filename:join(Examples, "sql.erl")), reprint(Generated)).
 
 generated_module_runs(_Config) ->
     {ok, 1, [Ada]} = sql:get_user(1),

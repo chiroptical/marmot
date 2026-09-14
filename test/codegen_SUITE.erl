@@ -111,7 +111,7 @@ generate_and_load(MarmotConfig, Module, RootName, Statement) ->
         file_content = Statement
     }),
     {ok, Forms} = codegen:forms(Module, [TypedQuery]),
-    {ok, _, Binary} = compile:forms(Forms, [return_errors]),
+    {ok, _, Binary} = marmot_compile:forms(Forms),
     {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
     {Module, codegen:render(Forms)}.
 
@@ -211,7 +211,7 @@ utf8_sql_round_trips_exact_bytes(_Config) ->
     },
     Module = cg_utf8_sql,
     {ok, Forms} = codegen:forms(Module, [Query]),
-    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])),
+    ?assertMatch({ok, _, _}, marmot_compile:forms(Forms)),
     Rendered = codegen:render(Forms),
     ?assertNotEqual(
         nomatch, binary:match(Rendered, <<"-- caf", 195, 169, " ok\\nselect 1 as one">>)
