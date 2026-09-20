@@ -104,7 +104,7 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, Config) ->
     Config.
 
--spec generate_and_load(#config{}, atom(), string(), binary()) -> module().
+-spec generate_and_load(#config{}, atom(), string(), binary()) -> {module(), binary()}.
 generate_and_load(MarmotConfig, Module, RootName, Statement) ->
     {ok, TypedQuery} = marmot:infer_types(MarmotConfig, #untyped_query{
         root_name = RootName,
@@ -113,11 +113,11 @@ generate_and_load(MarmotConfig, Module, RootName, Statement) ->
     {ok, Forms} = codegen:forms(Module, [TypedQuery]),
     {ok, _, Binary} = compile:forms(Forms, [return_errors]),
     {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
-    Module.
+    {Module, codegen:render(Forms)}.
 
 not_null_column_decodes_plain(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_not_null_sql, "cg_not_null", ~"select id from cg_items where id = $1"
     ),
     {ok, 1, [Row]} = Mod:cg_not_null(1),
@@ -125,7 +125,7 @@ not_null_column_decodes_plain(Config) ->
 
 nullable_column_decodes_option(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_nullable_sql, "cg_nullable", ~"select name from cg_items where id = $1"
     ),
     {ok, 1, [Row1]} = Mod:cg_nullable(1),
@@ -135,7 +135,7 @@ nullable_column_decodes_option(Config) ->
 
 enum_column_decodes_atom(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_enum_sql, "cg_enum", ~"select mood from cg_items where id = $1"
     ),
     {ok, 1, [Row]} = Mod:cg_enum(1),
@@ -143,7 +143,7 @@ enum_column_decodes_atom(Config) ->
 
 tricky_label_enum_decodes_atom(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_weird_sql, "cg_weird_q", ~"select $1::cg_weird as w"
     ),
     {ok, 1, [Row1]} = Mod:cg_weird_q('a-b'),
@@ -156,13 +156,13 @@ tricky_label_enum_decodes_atom(Config) ->
 enum_round_trip(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
     #config{pool = Pool} = MarmotConfig,
-    ReadMod = generate_and_load(
+    {ReadMod, _} = generate_and_load(
         MarmotConfig,
         cg_weird_read_sql,
         "cg_weird_read",
         ~"select w from cg_weird_items where id = $1"
     ),
-    WriteMod = generate_and_load(
+    {WriteMod, _} = generate_and_load(
         MarmotConfig,
         cg_weird_write_sql,
         "cg_weird_write",
@@ -185,7 +185,7 @@ enum_round_trip(Config) ->
 
 array_column_decodes_list(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_array_sql, "cg_array", ~"select tags from cg_items where id = $1"
     ),
     {ok, 1, [Row]} = Mod:cg_array(1),
@@ -193,7 +193,7 @@ array_column_decodes_list(Config) ->
 
 wrongly_guessed_not_null_column_errors(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, _} = generate_and_load(
         MarmotConfig, cg_agg_sql, "cg_agg", ~"select nullif(1, 1) as m"
     ),
     ?assertException(error, {marmot_decode_error, {unexpected_null, m}}, Mod:cg_agg()).
@@ -211,13 +211,15 @@ utf8_sql_round_trips_exact_bytes(_Config) ->
     },
     Module = cg_utf8_sql,
     {ok, Forms} = codegen:forms(Module, [Query]),
-    {ok, _, Binary} = compile:forms(Forms, [return_errors]),
-    {module, Module} = code:load_binary(Module, atom_to_list(Module) ++ ".erl", Binary),
-    ?assertEqual(Content, Module:cg_utf8_sql()).
+    ?assertMatch({ok, _, _}, compile:forms(Forms, [return_errors])),
+    Rendered = codegen:render(Forms),
+    ?assertNotEqual(
+        nomatch, binary:match(Rendered, <<"-- caf", 195, 169, " ok\\nselect 1 as one">>)
+    ).
 
 reserved_words_as_identifiers(Config) ->
     MarmotConfig = proplists:get_value(marmot_config, Config),
-    Mod = generate_and_load(
+    {Mod, Rendered} = generate_and_load(
         MarmotConfig,
         cg_reserved_sql,
         "end",
@@ -226,7 +228,7 @@ reserved_words_as_identifiers(Config) ->
     {ok, 1, [Row]} = Mod:'end'(1),
     ?assertEqual(1, records:get('end', Row)),
     ?assertEqual({some, ~"one"}, records:get('fun', Row)),
-    ?assertEqual(
-        ~"select id as \"end\", name as \"fun\" from cg_items where id = $1",
-        Mod:end_sql()
+    ?assertNotEqual(
+        nomatch,
+        binary:match(Rendered, <<"as \\\"end\\\", name as \\\"fun\\\" from">>)
     ).

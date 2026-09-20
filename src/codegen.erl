@@ -374,7 +374,7 @@ array_elem_form() ->
 
 -spec query_exports(#typed_query{}) -> [{atom(), non_neg_integer()}].
 query_exports(Query = #typed_query{params = Params}) ->
-    [{query_name(Query), length(Params)}, {sql_name(Query), 0}].
+    [{query_name(Query), length(Params)}].
 
 -spec query_name(#typed_query{}) -> atom().
 query_name(#typed_query{root_name = RootName}) ->
