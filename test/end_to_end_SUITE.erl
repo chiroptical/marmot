@@ -16,7 +16,8 @@
     left_join_decodes_option/1,
     remote_typed_columns_decode/1,
     consumer_module_compiles_and_runs/1,
-    pool_decode_opts_do_not_break_decoding/1
+    pool_decode_opts_do_not_break_decoding/1,
+    opts_arity_selects_pool/1
 ]).
 
 -define(MAPS_POOL, e2e_maps).
@@ -28,7 +29,8 @@ all() ->
         left_join_decodes_option,
         remote_typed_columns_decode,
         consumer_module_compiles_and_runs,
-        pool_decode_opts_do_not_break_decoding
+        pool_decode_opts_do_not_break_decoding,
+        opts_arity_selects_pool
     ].
 
 init_per_suite(Config) ->
@@ -210,3 +212,17 @@ pool_decode_opts_do_not_break_decoding(_Config) ->
     Result = pgo:transaction(?MAPS_POOL, fun() -> sql:get_user(1) end, #{}),
     {ok, 1, [Row]} = Result,
     ?assertEqual({some, ~"ada"}, records:get(name, Row)).
+
+opts_arity_selects_pool(_Config) ->
+    {ok, 1, [Default]} = sql:get_user(1, #{pool => default}),
+    ?assertEqual({some, ~"ada"}, records:get(name, Default)),
+    {ok, 1, [Maps]} = sql:get_user(1, #{pool => ?MAPS_POOL}),
+    ?assertEqual({some, ~"ada"}, records:get(name, Maps)),
+    {ok, 1} = sql:insert_user(9, ~"kim", sad, #{pool => ?MAPS_POOL}),
+    {ok, 1, [Kim]} = sql:get_user(9, #{}),
+    ?assertEqual({some, ~"kim"}, records:get(name, Kim)),
+    ?assertException(
+        error,
+        {in_other_pool_transaction, ?MAPS_POOL},
+        pgo:transaction(default, fun() -> sql:get_user(1, #{pool => ?MAPS_POOL}) end, #{})
+    ).

@@ -173,7 +173,11 @@ emitted_names(Queries) ->
 
 -spec query_emitted_names(#typed_query{}) -> [{atom(), non_neg_integer()}].
 query_emitted_names(Query = #typed_query{params = Params, returns = Returns}) ->
-    Base = [{query_name(Query), length(Params)}, {sql_name(Query), 0}],
+    Base = [
+        {query_name(Query), length(Params)},
+        {query_name(Query), length(Params) + 1},
+        {sql_name(Query), 0}
+    ],
     case Returns of
         [] -> Base;
         _ -> [{decode_name(Query), 1} | Base]
@@ -374,7 +378,7 @@ array_elem_form() ->
 
 -spec query_exports(#typed_query{}) -> [{atom(), non_neg_integer()}].
 query_exports(Query = #typed_query{params = Params}) ->
-    [{query_name(Query), length(Params)}].
+    [{query_name(Query), length(Params)}, {query_name(Query), length(Params) + 1}].
 
 -spec query_name(#typed_query{}) -> atom().
 query_name(#typed_query{root_name = RootName}) ->
@@ -404,7 +408,7 @@ prefixed_atom(Prefix, Root) ->
 query_forms(Query) ->
     [sql_form(Query)] ++
         doc_forms(Query) ++
-        [spec_form(Query), function_form(Query)] ++
+        [spec_form(Query), delegate_form(Query), opts_spec_form(Query), opts_function_form(Query)] ++
         decode_forms(Query).
 
 -spec record_forms(#typed_query{}) -> [erl_parse:abstract_form()].
@@ -449,19 +453,42 @@ doc_forms(#typed_query{doc = Lines}) ->
 
 -spec spec_form(#typed_query{}) -> erl_parse:abstract_form().
 spec_form(Query = #typed_query{params = Params}) ->
-    ParamTypes = [
+    function_spec(query_name(Query), length(Params), param_types(Params), return_type(Query)).
+
+-spec opts_spec_form(#typed_query{}) -> erl_parse:abstract_form().
+opts_spec_form(Query = #typed_query{params = Params}) ->
+    OptsType =
+        {ann_type, codegen_type:anno(), [
+            {var, codegen_type:anno(), 'Opts'},
+            {remote_type, codegen_type:anno(), [
+                {atom, codegen_type:anno(), pgo}, {atom, codegen_type:anno(), options}, []
+            ]}
+        ]},
+    function_spec(
+        query_name(Query), length(Params) + 1, param_types(Params) ++ [OptsType], return_type(Query)
+    ).
+
+-spec function_spec(
+    atom(), non_neg_integer(), [erl_parse:abstract_type()], erl_parse:abstract_type()
+) ->
+    erl_parse:abstract_form().
+function_spec(Name, Arity, ParamTypes, ReturnType) ->
+    {attribute, codegen_type:anno(), spec,
+        {{Name, Arity}, [
+            {type, codegen_type:anno(), 'fun', [
+                {type, codegen_type:anno(), product, ParamTypes},
+                ReturnType
+            ]}
+        ]}}.
+
+-spec param_types([marmot:type()]) -> [erl_parse:abstract_type()].
+param_types(Params) ->
+    [
         {ann_type, codegen_type:anno(), [
             {var, codegen_type:anno(), arg_var_name(I)}, codegen_type:to_ast(P)
         ]}
      || {I, P} <- lists:enumerate(1, Params)
-    ],
-    {attribute, codegen_type:anno(), spec,
-        {{query_name(Query), length(Params)}, [
-            {type, codegen_type:anno(), 'fun', [
-                {type, codegen_type:anno(), product, ParamTypes},
-                return_type(Query)
-            ]}
-        ]}}.
+    ].
 
 -spec return_type(#typed_query{}) -> erl_parse:abstract_type().
 return_type(#typed_query{returns = []}) ->
@@ -488,8 +515,15 @@ return_type(Query = #typed_query{}) ->
         ]}
     ]}.
 
--spec function_form(#typed_query{}) -> erl_syntax:syntaxTree().
-function_form(Query = #typed_query{params = Params, returns = []}) ->
+-spec delegate_form(#typed_query{}) -> erl_syntax:syntaxTree().
+delegate_form(Query = #typed_query{params = Params}) ->
+    merl:qquote(?MERL_POS, "'@Name'(_@@Args) -> '@Name'(_@@Args, #{}).", [
+        {'Name', term(query_name(Query))},
+        {'Args', arg_vars(length(Params))}
+    ]).
+
+-spec opts_function_form(#typed_query{}) -> erl_syntax:syntaxTree().
+opts_function_form(Query = #typed_query{params = Params, returns = []}) ->
     ArgVars = arg_vars(length(Params)),
     merl:qquote(?MERL_POS, zero_column_query_text(), [
         {'Name', term(query_name(Query))},
@@ -497,7 +531,7 @@ function_form(Query = #typed_query{params = Params, returns = []}) ->
         {'SqlName', term(sql_name(Query))},
         {'EncodedArgs', encoded_args(Params, ArgVars)}
     ]);
-function_form(Query = #typed_query{params = Params}) ->
+opts_function_form(Query = #typed_query{params = Params}) ->
     ArgVars = arg_vars(length(Params)),
     merl:qquote(?MERL_POS, query_text(), [
         {'Name', term(query_name(Query))},
@@ -509,24 +543,28 @@ function_form(Query = #typed_query{params = Params}) ->
 
 -spec zero_column_query_text() -> string().
 zero_column_query_text() ->
-    "'@Name'(_@@Args) ->\n"
-    "    Opts = #{decode_opts =>\n"
-    "                 [{return_rows_as_maps, false},\n"
-    "                  {column_name_as_atom, false},\n"
-    "                  {decode_fun, undefined}]},\n"
-    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], Opts) of\n"
+    "'@Name'(_@@Args, Opts) ->\n"
+    "    case\n"
+    "        pgo:query('@SqlName'(), [_@@EncodedArgs],\n"
+    "                  maps:merge(Opts, #{decode_opts =>\n"
+    "                                     [{return_rows_as_maps, false},\n"
+    "                                      {column_name_as_atom, false},\n"
+    "                                      {decode_fun, undefined}]}))\n"
+    "    of\n"
     "        #{num_rows := N} -> {ok, N};\n"
     "        {error, _} = E -> E\n"
     "    end.".
 
 -spec query_text() -> string().
 query_text() ->
-    "'@Name'(_@@Args) ->\n"
-    "    Opts = #{decode_opts =>\n"
-    "                 [{return_rows_as_maps, false},\n"
-    "                  {column_name_as_atom, false},\n"
-    "                  {decode_fun, undefined}]},\n"
-    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], Opts) of\n"
+    "'@Name'(_@@Args, Opts) ->\n"
+    "    case\n"
+    "        pgo:query('@SqlName'(), [_@@EncodedArgs],\n"
+    "                  maps:merge(Opts, #{decode_opts =>\n"
+    "                                     [{return_rows_as_maps, false},\n"
+    "                                      {column_name_as_atom, false},\n"
+    "                                      {decode_fun, undefined}]}))\n"
+    "    of\n"
     "        #{num_rows := N, rows := Rows} ->\n"
     "            {ok, N, ['@DecodeName'(R) || R <- Rows]};\n"
     "        {error, _} = E -> E\n"
