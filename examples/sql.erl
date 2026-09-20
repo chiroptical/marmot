@@ -71,14 +71,8 @@ get_event(Arg1) ->
             ]
     },
     case pgo:query(get_event_sql(), [Arg1], Opts) of
-        #{num_rows := N, rows := Rows} ->
-            try
-                {ok, N, [decode_get_event_row(R) || R <- Rows]}
-            catch
-                {marmot_decode_error, Reason} -> {error, Reason}
-            end;
-        {error, _} = E ->
-            E
+        #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_event_row(R) || R <- Rows]};
+        {error, _} = E -> E
     end.
 
 decode_get_event_row({C1, C2, C3, C4, C5}) ->
@@ -112,14 +106,8 @@ get_user(Arg1) ->
             ]
     },
     case pgo:query(get_user_sql(), [Arg1], Opts) of
-        #{num_rows := N, rows := Rows} ->
-            try
-                {ok, N, [decode_get_user_row(R) || R <- Rows]}
-            catch
-                {marmot_decode_error, Reason} -> {error, Reason}
-            end;
-        {error, _} = E ->
-            E
+        #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_user_row(R) || R <- Rows]};
+        {error, _} = E -> E
     end.
 
 decode_get_user_row({C1, C2, C3}) ->
@@ -184,11 +172,7 @@ list_users_by_mood(Arg1) ->
     },
     case pgo:query(list_users_by_mood_sql(), [from_ex_mood(Arg1)], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try
-                {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]}
-            catch
-                {marmot_decode_error, Reason} -> {error, Reason}
-            end;
+            {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]};
         {error, _} = E ->
             E
     end.
@@ -228,11 +212,7 @@ user_with_latest_order(Arg1) ->
     },
     case pgo:query(user_with_latest_order_sql(), [Arg1], Opts) of
         #{num_rows := N, rows := Rows} ->
-            try
-                {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]}
-            catch
-                {marmot_decode_error, Reason} -> {error, Reason}
-            end;
+            {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]};
         {error, _} = E ->
             E
     end.
@@ -253,16 +233,16 @@ decode_user_with_latest_order_row({C1, C2, C3}) ->
     }.
 
 array_elem(Col, null) ->
-    throw({marmot_decode_error, {unexpected_null_element, Col}});
+    error({marmot_decode_error, {unexpected_null_element, Col}});
 array_elem(Col, {array, _}) ->
-    throw({marmot_decode_error, {unsupported_multidimensional_array, Col}});
+    error({marmot_decode_error, {unsupported_multidimensional_array, Col}});
 array_elem(_Col, V) ->
     V.
 
 to_ex_mood(<<"happy">>) -> happy;
 to_ex_mood(<<"sad">>) -> sad;
 to_ex_mood(<<"meh">>) -> meh;
-to_ex_mood(V) -> throw({marmot_decode_error, {unknown_enum_label, ex_mood, V}}).
+to_ex_mood(V) -> error({marmot_decode_error, {unknown_enum_label, ex_mood, V}}).
 
 from_ex_mood(happy) -> <<"happy">>;
 from_ex_mood(sad) -> <<"sad">>;

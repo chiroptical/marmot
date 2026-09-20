@@ -196,7 +196,7 @@ wrongly_guessed_not_null_column_errors(Config) ->
     Mod = generate_and_load(
         MarmotConfig, cg_agg_sql, "cg_agg", ~"select nullif(1, 1) as m"
     ),
-    ?assertEqual({error, {unexpected_null, m}}, Mod:cg_agg()).
+    ?assertException(error, {marmot_decode_error, {unexpected_null, m}}, Mod:cg_agg()).
 
 utf8_sql_round_trips_exact_bytes(_Config) ->
     Content = <<"-- caf", 195, 169, " ok\nselect 1 as one">>,
