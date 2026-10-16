@@ -4,7 +4,7 @@
 
 -spec main([string()]) -> no_return().
 main(_Args) ->
-    Config = #{directories => ["examples/sql"]},
+    Config = #{directories => ["examples/sql"], target_otp => 29},
     case marmot:generate(Config) of
         ok ->
             halt(0);

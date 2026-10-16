@@ -127,7 +127,7 @@ format_error({integer_env_out_of_range, Variable, Value, Min, Max}) ->
 format_error({invalid_sslmode, SslMode}) ->
     marmot_error:message(
         "~ts is not an sslmode marmot supports. Use `disable`, `require` or "
-        "`verify-full` — libpq's `prefer` and `allow` need a plaintext retry "
+        "`verify-full`; libpq's `prefer` and `allow` need a plaintext retry "
         "that pgo does not implement.",
         [SslMode]
     );
