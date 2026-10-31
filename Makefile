@@ -9,7 +9,7 @@ test:
 	rebar3 ct
 
 check:
-	rebar3 as examples dialyzer
+	rebar3 as analysis,examples dialyzer
 
 examples:
 	rebar3 as examples escriptize
