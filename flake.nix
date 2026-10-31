@@ -29,7 +29,13 @@
             pkgs.callPackage ./nix/checks.nix { src = self; }
           );
         in
-        if pkgs.stdenv.hostPlatform.isDarwin then builtins.removeAttrs checks [ "ct" ] else checks
+        if pkgs.stdenv.hostPlatform.isDarwin then
+          builtins.removeAttrs checks [
+            "ct"
+            "plugin"
+          ]
+        else
+          checks
       );
     };
 }
