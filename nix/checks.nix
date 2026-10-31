@@ -5,6 +5,7 @@
   postgresql,
   postgresqlTestHook,
   treefmt,
+  git,
   callPackage,
   src,
 }:
@@ -85,6 +86,38 @@ in
     checkPhase = ''
       runHook preCheck
       rebar3 as examples dialyzer
+      runHook postCheck
+    '';
+  };
+
+  plugin = rebar3Check {
+    name = "marmot-plugin";
+    nativeBuildInputs = [
+      postgresql
+      postgresqlTestHook
+      git
+      erlfmt
+    ];
+    postgresqlEnableTCP = 1;
+    postgresqlExtraSettings = "port = 5432";
+    PGUSER = "marmot";
+    PGDATABASE = "marmot";
+    postgresqlTestUserOptions = "LOGIN PASSWORD 'marmot' SUPERUSER";
+    PGO_HOST = "127.0.0.1";
+    PGO_PORT = "5432";
+    PGO_USER = "marmot";
+    PGO_DATABASE = "marmot";
+    PGO_PASSWORD = "marmot";
+    PGO_POOL_SIZE = "1";
+    postgresqlTestSetupPost = ''
+      sed 's/^\(host.*\)trust$/\1scram-sha-256/' "$PGDATA/pg_hba.conf" >"$PGDATA/pg_hba.conf.scram"
+      mv "$PGDATA/pg_hba.conf.scram" "$PGDATA/pg_hba.conf"
+      pg_ctl reload
+    '';
+    MARMOT_DEPS = deps;
+    checkPhase = ''
+      runHook preCheck
+      bash nix/plugin.sh
       runHook postCheck
     '';
   };

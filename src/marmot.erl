@@ -11,6 +11,7 @@ TODO
 -import_record(marmot_config, [config]).
 
 -export([
+    init/1,
     generate/1,
     from_file/1,
     leading_comment/1,
@@ -93,6 +94,11 @@ TODO
 -spec generate(generator:config()) -> ok | {error, [generator:error()]}.
 generate(Config) ->
     generator:generate(Config).
+
+%% Rebar registration is deliberately inert: help needs no database.
+-spec init(term()) -> {ok, term()}.
+init(State) ->
+    marmot_prv_generate:init(State).
 
 -doc """
 Given a `string()`, attempt to read the file and generate an `#untyped_query{}`.
