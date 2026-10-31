@@ -6,7 +6,7 @@ running anything — and so `make check` can type-check it.
 
 ```
 schema.sql          the fixture schema the queries are typed against
-sql/*.sql           the queries: one file, one generated function
+sql/*.sql           the queries: one file, one generated query (two arities)
 sql.erl             generated from sql/ by marmot — do not edit
 example_users.erl   a hand-written consumer of sql.erl
 ```
@@ -55,7 +55,10 @@ what the generated `-spec`s claim.
 
 `example_users.erl` is the other half of the proof: it names those types in its
 own `-spec`s and pattern-matches the generated records, so dialyzer checks the
-generated code against a caller rather than in isolation.
+generated code against a caller rather than in isolation. Its
+`latest_order_total/2` shows the consumer-side shape of the opts arity:
+delegate with `#{}` from the plain arity, pass `pgo` options (such as
+`#{pool => ...}`) straight through to the generated query.
 
 Records and headers
 -------------------
