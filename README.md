@@ -9,6 +9,33 @@ A pure Erlang implementation of [squirrel][squirrel]
 
 Working, unreleased. Requires PostgreSQL 16 or newer.
 
+## Generate from rebar3
+
+Add Marmot to your project's `rebar.config` (requires OTP 29):
+
+```erlang
+{project_plugins, [
+    {marmot, {git, "https://github.com/chiroptical/marmot.git",
+        {ref, "<commit>"}}}
+]}.
+{marmot, #{directories => ["src/myapp_sql"]}}.
+```
+
+Apply your database schema and put one query in each `.sql` file, then run:
+
+```sh
+# marmot also accepts setting PGO_* environment variables
+export DATABASE_URL='postgres://user:password@localhost:5432/myapp'
+rebar3 marmot generate
+rebar3 compile
+```
+
+The generated code requires `pgo` and some UUID library (I use [this
+one](https://github.com/okeuday/uuid.git)). Without `directories`, it searches
+`src/` recursively. You can use the `search_root` option to change that
+behavior. Set `target_otp` to generate Erlang for a release without native
+records.
+
 ## Example
 
 `src/sql/get_user.sql`,
