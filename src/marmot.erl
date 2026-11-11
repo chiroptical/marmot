@@ -15,6 +15,7 @@ TODO
     generate/1,
     from_file/1,
     leading_comment/1,
+    split_leading_comment/1,
     infer_types/2,
     resolve_parameters/2,
     resolve_returns/3,
@@ -137,14 +138,22 @@ valid_root_name(RootName) ->
 
 -spec leading_comment(binary()) -> [binary()].
 leading_comment(Content) ->
+    {Doc, _Sql} = split_leading_comment(Content),
+    Doc.
+
+-spec split_leading_comment(binary()) -> {[binary()], binary()}.
+split_leading_comment(Content) ->
     case iolist_to_binary(string:trim(Content, leading)) of
         <<"--", Rest/binary>> ->
             case binary:split(Rest, ~"\n") of
-                [Line, Tail] -> [trim(Line) | leading_comment(Tail)];
-                [Line] -> [trim(Line)]
+                [Line, Tail] ->
+                    {Doc, Sql} = split_leading_comment(Tail),
+                    {[trim(Line) | Doc], Sql};
+                [Line] ->
+                    {[trim(Line)], <<>>}
             end;
         _ ->
-            []
+            {[], Content}
     end.
 
 -spec trim(binary()) -> binary().

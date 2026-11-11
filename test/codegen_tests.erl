@@ -82,12 +82,11 @@ render_single_column_test() ->
             -spec one(Opts :: pgo:options()) -> {ok, non_neg_integer(), [#one_row{}]} |
                                                 {error, term()}.
             one(Opts) ->
-                case pgo:query(one_sql(), [], maps:merge(Opts, ?OPTIONS)) of
-                    #{num_rows := N, rows := Rows} -> {ok, N, [decode_one_row(R) || R <- Rows]};
+                case pgo:query(<<"select 1 as one"/utf8>>, [], maps:merge(Opts, ?OPTIONS)) of
+                    #{num_rows := N, rows := Rows} when is_integer(N) ->
+                        {ok, N, [decode_one_row(R) || R <- Rows]};
                     {error, _} = E -> E
                 end.
-
-            one_sql() -> <<"select 1 as one"/utf8>>.
             decode_one_row({C1}) -> #one_row{one = C1}.
             """
         ]),
@@ -222,7 +221,7 @@ enum_conflict_test() ->
     ?assertNotEqual(nomatch, binary:match(Message, ~"100")),
     ?assertNotEqual(nomatch, binary:match(Message, ~"200")).
 
-name_collision_test() ->
+sql_suffix_no_collision_test() ->
     {module, marmot} = code:ensure_loaded(marmot),
     Query1 = #typed_query{
         input_file_name = "foo.sql",
@@ -243,10 +242,9 @@ name_collision_test() ->
         doc = []
     },
     Result = codegen:forms(collide_sql, [Query1, Query2]),
-    ?assertEqual({error, {name_collision, foo_sql, 0}}, Result),
-    {error, Reason} = Result,
-    Message = codegen:format_error(Reason),
-    ?assertNotEqual(nomatch, binary:match(Message, ~"foo_sql")).
+    ?assertMatch({ok, _}, Result),
+    {ok, Forms} = Result,
+    ?assertMatch({ok, _, _}, marmot_compile:forms(Forms)).
 
 opts_arity_name_collision_test() ->
     {module, marmot} = code:ensure_loaded(marmot),

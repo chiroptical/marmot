@@ -220,3 +220,14 @@ leading_comment_strips_indentation_test() ->
 
 leading_comment_strips_trailing_whitespace_test() ->
     ?assertEqual([~"a", ~"b"], marmot:leading_comment(~"-- a   \n--  b\t\nselect 1")).
+
+split_leading_comment_preserves_sql_test() ->
+    Sql =
+        ~"  select '-- literal', $$-- dollar quoted$$ /* outer /* nested */ */ -- inline\r\n-- trailing\r\n",
+    ?assertEqual(
+        {[~"café", ~"second"], Sql},
+        marmot:split_leading_comment(<<"\n -- café\r\n\n-- second\r\n"/utf8, Sql/binary>>)
+    ),
+    ?assertEqual({[], Sql}, marmot:split_leading_comment(Sql)),
+    ?assertEqual({[~"only"], <<>>}, marmot:split_leading_comment(~"-- only")),
+    ?assertEqual({[], <<>>}, marmot:split_leading_comment(<<>>)).

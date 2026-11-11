@@ -76,9 +76,20 @@ get_event(Arg1) -> get_event(Arg1, #{}).
     {ok, non_neg_integer(), [#get_event_row{}]}
     | {error, term()}.
 get_event(Arg1, Opts) ->
-    case pgo:query(get_event_sql(), [Arg1], maps:merge(Opts, ?OPTIONS)) of
-        #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_event_row(R) || R <- Rows]};
-        {error, _} = E -> E
+    case
+        pgo:query(
+            <<
+                "select id, happened_on, happened_at, recorded_at, tags from "
+                "ex_events where id = $1\n"/utf8
+            >>,
+            [Arg1],
+            maps:merge(Opts, ?OPTIONS)
+        )
+    of
+        #{num_rows := N, rows := Rows} when is_integer(N) ->
+            {ok, N, [decode_get_event_row(R) || R <- Rows]};
+        {error, _} = E ->
+            E
     end.
 
 -doc "Get a user by id.".
@@ -91,9 +102,17 @@ get_user(Arg1) -> get_user(Arg1, #{}).
     {ok, non_neg_integer(), [#get_user_row{}]}
     | {error, term()}.
 get_user(Arg1, Opts) ->
-    case pgo:query(get_user_sql(), [Arg1], maps:merge(Opts, ?OPTIONS)) of
-        #{num_rows := N, rows := Rows} -> {ok, N, [decode_get_user_row(R) || R <- Rows]};
-        {error, _} = E -> E
+    case
+        pgo:query(
+            <<"select id, name, mood from ex_users where id = $1\n"/utf8>>,
+            [Arg1],
+            maps:merge(Opts, ?OPTIONS)
+        )
+    of
+        #{num_rows := N, rows := Rows} when is_integer(N) ->
+            {ok, N, [decode_get_user_row(R) || R <- Rows]};
+        {error, _} = E ->
+            E
     end.
 
 -doc "Insert a user. Returns nothing, so the generated function yields "
@@ -112,12 +131,12 @@ insert_user(Arg1, Arg2, Arg3) -> insert_user(Arg1, Arg2, Arg3, #{}).
 insert_user(Arg1, Arg2, Arg3, Opts) ->
     case
         pgo:query(
-            insert_user_sql(),
+            <<"insert into ex_users (id, name, mood) values ($1, $2, $3)\n"/utf8>>,
             [Arg1, Arg2, from_ex_mood(Arg3)],
             maps:merge(Opts, ?OPTIONS)
         )
     of
-        #{num_rows := N} -> {ok, N};
+        #{num_rows := N} when is_integer(N) -> {ok, N};
         {error, _} = E -> E
     end.
 
@@ -131,8 +150,14 @@ list_users_by_mood(Arg1) -> list_users_by_mood(Arg1, #{}).
     {ok, non_neg_integer(), [#list_users_by_mood_row{}]}
     | {error, term()}.
 list_users_by_mood(Arg1, Opts) ->
-    case pgo:query(list_users_by_mood_sql(), [from_ex_mood(Arg1)], maps:merge(Opts, ?OPTIONS)) of
-        #{num_rows := N, rows := Rows} ->
+    case
+        pgo:query(
+            <<"select id, name from ex_users where mood = $1 order by id\n"/utf8>>,
+            [from_ex_mood(Arg1)],
+            maps:merge(Opts, ?OPTIONS)
+        )
+    of
+        #{num_rows := N, rows := Rows} when is_integer(N) ->
             {ok, N, [decode_list_users_by_mood_row(R) || R <- Rows]};
         {error, _} = E ->
             E
@@ -148,18 +173,22 @@ user_with_latest_order(Arg1) -> user_with_latest_order(Arg1, #{}).
     {ok, non_neg_integer(), [#user_with_latest_order_row{}]}
     | {error, term()}.
 user_with_latest_order(Arg1, Opts) ->
-    case pgo:query(user_with_latest_order_sql(), [Arg1], maps:merge(Opts, ?OPTIONS)) of
-        #{num_rows := N, rows := Rows} ->
+    case
+        pgo:query(
+            <<
+                "select u.id as user_id, o.id as order_id, o.total as order_total\nfr"
+                "om ex_users u\nleft join ex_orders o on o.user_id = u.id\nwhere "
+                "u.id = $1\norder by o.id desc\n"/utf8
+            >>,
+            [Arg1],
+            maps:merge(Opts, ?OPTIONS)
+        )
+    of
+        #{num_rows := N, rows := Rows} when is_integer(N) ->
             {ok, N, [decode_user_with_latest_order_row(R) || R <- Rows]};
         {error, _} = E ->
             E
     end.
-
-get_event_sql() ->
-    <<
-        "-- Get an event by id.\nselect id, happened_on, happened_at, "
-        "recorded_at, tags from ex_events where id = $1\n"/utf8
-    >>.
 decode_get_event_row({C1, C2, C3, C4, C5}) ->
     #get_event_row{
         id = C1,
@@ -168,12 +197,6 @@ decode_get_event_row({C1, C2, C3, C4, C5}) ->
         recorded_at = C4,
         tags = [array_elem(tags, X) || X <- C5]
     }.
-
-get_user_sql() ->
-    <<
-        "-- Get a user by id.\nselect id, name, mood from ex_users where "
-        "id = $1\n"/utf8
-    >>.
 decode_get_user_row({C1, C2, C3}) ->
     #get_user_row{
         id = C1,
@@ -184,19 +207,6 @@ decode_get_user_row({C1, C2, C3}) ->
             end,
         mood = to_ex_mood(C3)
     }.
-
-insert_user_sql() ->
-    <<
-        "-- Insert a user. Returns nothing, so the generated function "
-        "yields {ok, Count}.\ninsert into ex_users (id, name, mood) "
-        "values ($1, $2, $3)\n"/utf8
-    >>.
-
-list_users_by_mood_sql() ->
-    <<
-        "-- List every user in a given mood, oldest id first.\nselect "
-        "id, name from ex_users where mood = $1 order by id\n"/utf8
-    >>.
 decode_list_users_by_mood_row({C1, C2}) ->
     #list_users_by_mood_row{
         id = C1,
@@ -206,14 +216,6 @@ decode_list_users_by_mood_row({C1, C2}) ->
                 V -> {some, V}
             end
     }.
-
-user_with_latest_order_sql() ->
-    <<
-        "-- A user and their most recent order, if they have one.\nselect "
-        "u.id as user_id, o.id as order_id, o.total as order_total\nfrom "
-        "ex_users u\nleft join ex_orders o on o.user_id = u.id\nwhere "
-        "u.id = $1\norder by o.id desc\n"/utf8
-    >>.
 decode_user_with_latest_order_row({C1, C2, C3}) ->
     #user_with_latest_order_row{
         user_id = C1,
