@@ -3,6 +3,7 @@
   beam29Packages,
   nixfmt,
   postgresql,
+  erlang-language-platform,
   postgresqlTestHook,
   treefmt,
   callPackage,
@@ -99,6 +100,7 @@ in
       postgresql
       postgresqlTestHook
       erlfmt
+      erlang-language-platform
     ];
     postgresqlEnableTCP = 1;
     postgresqlExtraSettings = "port = 5432";
@@ -124,9 +126,13 @@ in
       cp -R ${deps}/. "$consumer/_checkouts/"
       cp -R "$src/examples/sql" "$consumer/src/"
       cat > "$consumer/rebar.config" <<'CONFIG'
+      {deps, [pgo, uuid]}.
       {project_plugins, [marmot]}.
       {marmot, #{directories => ["src/sql"], target_otp => 29}}.
       CONFIG
+      cat > "$consumer/src/consumer.app.src" <<'APP'
+      {application, consumer, [{vsn, "0.1.0"}, {applications, [kernel, stdlib]}]}.
+      APP
       psql -v ON_ERROR_STOP=1 -f "$src/examples/schema.sql"
       cd "$consumer"
 
@@ -135,6 +141,10 @@ in
       rebar3 marmot generate
       erlfmt -w src/sql.erl
       diff -u "$src/examples/sql.erl" src/sql.erl
+      elp lint --module sql --include-generated --include-erlc-diagnostics --include-eqwalizer-diagnostics
+      sed -i 's/target_otp => 29/target_otp => 28/' rebar.config
+      rebar3 marmot generate
+      elp lint --module sql --include-generated --include-erlc-diagnostics --include-eqwalizer-diagnostics
       runHook postCheck
     '';
   };

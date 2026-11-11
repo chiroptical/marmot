@@ -199,7 +199,7 @@ wrongly_guessed_not_null_column_errors(Config) ->
     ?assertException(error, {marmot_decode_error, {unexpected_null, m}}, Mod:cg_agg()).
 
 utf8_sql_round_trips_exact_bytes(_Config) ->
-    Content = <<"-- caf", 195, 169, " ok\nselect 1 as one">>,
+    Content = <<"-- documentation\nselect 1 as one -- caf", 195, 169, " ok">>,
     Query = #typed_query{
         input_file_name = "cg_utf8.sql",
         starting_line = 1,
@@ -214,7 +214,7 @@ utf8_sql_round_trips_exact_bytes(_Config) ->
     ?assertMatch({ok, _, _}, marmot_compile:forms(Forms)),
     Rendered = codegen:render(Forms),
     ?assertNotEqual(
-        nomatch, binary:match(Rendered, <<"-- caf", 195, 169, " ok\\nselect 1 as one">>)
+        nomatch, binary:match(Rendered, <<"select 1 as one -- caf", 195, 169, " ok">>)
     ).
 
 reserved_words_as_identifiers(Config) ->

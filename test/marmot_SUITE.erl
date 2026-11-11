@@ -554,6 +554,10 @@ infer_types_non_dml(Config) ->
     ?assertEqual(
         {error, {non_dml_statement, ~"set"}},
         infer_types_for(MarmotConfig, ~"set search_path to public")
+    ),
+    ?assertEqual(
+        {error, {non_dml_statement, ~"truncate"}},
+        infer_types_for(MarmotConfig, ~"truncate mr_left")
     ).
 
 infer_types_doc(Config) ->

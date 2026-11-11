@@ -19,7 +19,7 @@
 
 -type form() :: erl_parse:abstract_form() | erl_syntax:syntaxTree().
 
--type form_kind() :: moduledoc | doc | spec | attribute | function | sql | decode_row.
+-type form_kind() :: moduledoc | doc | spec | attribute | function | decode_row.
 
 -type tagged_form() :: {form_kind(), form()}.
 
@@ -114,7 +114,7 @@ public_forms(Query) ->
 
 -spec private_forms(#typed_query{}) -> [tagged_form()].
 private_forms(Query) ->
-    [{sql, sql_form(Query)} | tag(decode_row, decode_forms(Query))].
+    tag(decode_row, decode_forms(Query)).
 
 -spec tag(form_kind(), [form()]) -> [tagged_form()].
 tag(Kind, Forms) ->
@@ -304,8 +304,7 @@ emitted_names(Queries) ->
 query_emitted_names(Query = #typed_query{params = Params, returns = Returns}) ->
     Base = [
         {query_name(Query), length(Params)},
-        {query_name(Query), length(Params) + 1},
-        {sql_name(Query), 0}
+        {query_name(Query), length(Params) + 1}
     ],
     case Returns of
         [] -> Base;
@@ -521,10 +520,6 @@ query_exports(Query = #typed_query{params = Params}) ->
 query_name(#typed_query{root_name = RootName}) ->
     binary_to_atom(iolist_to_binary(RootName), utf8).
 
--spec sql_name(#typed_query{}) -> atom().
-sql_name(Query) ->
-    suffixed_atom(query_name(Query), "_sql").
-
 -spec row_record_name(#typed_query{}) -> atom().
 row_record_name(Query) ->
     suffixed_atom(query_name(Query), "_row").
@@ -575,19 +570,15 @@ classic_record_forms(#typed_query{returns = []}) ->
 classic_record_forms(Query = #typed_query{}) ->
     [{attribute, codegen_type:anno(), record, {row_record_name(Query), record_fields(Query)}}].
 
--spec sql_form(#typed_query{}) -> erl_syntax:syntaxTree().
-sql_form(Query = #typed_query{content = Content}) ->
-    Codepoints = unicode:characters_to_list(Content, utf8),
-    Bin =
-        {bin, codegen_type:anno(), [
-            {bin_element, codegen_type:anno(), {string, codegen_type:anno(), Codepoints}, default, [
-                utf8
-            ]}
-        ]},
-    merl:qquote(?MERL_POS, "'@Name'() -> _@Sql.", [
-        {'Name', term(sql_name(Query))},
-        {'Sql', Bin}
-    ]).
+-spec sql_expr(#typed_query{}) -> erl_parse:abstract_expr().
+sql_expr(#typed_query{content = Content}) ->
+    {_Doc, Sql} = marmot:split_leading_comment(Content),
+    Codepoints = unicode:characters_to_list(Sql, utf8),
+    {bin, codegen_type:anno(), [
+        {bin_element, codegen_type:anno(), {string, codegen_type:anno(), Codepoints}, default, [
+            utf8
+        ]}
+    ]}.
 
 -spec doc_forms(#typed_query{}) -> [erl_parse:abstract_form()].
 doc_forms(#typed_query{doc = []}) ->
@@ -675,7 +666,7 @@ opts_function_form(Query = #typed_query{params = Params, returns = []}) ->
     merl:qquote(?MERL_POS, zero_column_query_text(), [
         {'Name', term(query_name(Query))},
         {'Args', ArgVars},
-        {'SqlName', term(sql_name(Query))},
+        {'Sql', sql_expr(Query)},
         {'MergeArg', merge_arg()},
         {'EncodedArgs', encoded_args(Params, ArgVars)}
     ]);
@@ -684,7 +675,7 @@ opts_function_form(Query = #typed_query{params = Params}) ->
     merl:qquote(?MERL_POS, query_text(), [
         {'Name', term(query_name(Query))},
         {'Args', ArgVars},
-        {'SqlName', term(sql_name(Query))},
+        {'Sql', sql_expr(Query)},
         {'DecodeName', term(decode_name(Query))},
         {'MergeArg', merge_arg()},
         {'EncodedArgs', encoded_args(Params, ArgVars)}
@@ -705,16 +696,16 @@ options_macro() ->
 -spec zero_column_query_text() -> string().
 zero_column_query_text() ->
     "'@Name'(_@@Args, Opts) ->\n"
-    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], _@MergeArg) of\n"
-    "        #{num_rows := N} -> {ok, N};\n"
+    "    case pgo:query(_@Sql, [_@@EncodedArgs], _@MergeArg) of\n"
+    "        #{num_rows := N} when is_integer(N) -> {ok, N};\n"
     "        {error, _} = E -> E\n"
     "    end.".
 
 -spec query_text() -> string().
 query_text() ->
     "'@Name'(_@@Args, Opts) ->\n"
-    "    case pgo:query('@SqlName'(), [_@@EncodedArgs], _@MergeArg) of\n"
-    "        #{num_rows := N, rows := Rows} ->\n"
+    "    case pgo:query(_@Sql, [_@@EncodedArgs], _@MergeArg) of\n"
+    "        #{num_rows := N, rows := Rows} when is_integer(N) ->\n"
     "            {ok, N, ['@DecodeName'(R) || R <- Rows]};\n"
     "        {error, _} = E -> E\n"
     "    end.".
